@@ -76,6 +76,7 @@ class DBWNode(object):
             self.controllerEnabled = True  
         else: 
             self.controllerEnabled = False
+            
     
     def current_velocity_cb(self, twistMsg):
         self.control_params['current_speed_mps'] = twistMsg.twist.linear.x
