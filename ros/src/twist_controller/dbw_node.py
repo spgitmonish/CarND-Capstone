@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import rospy
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Float32
 from dbw_mkz_msgs.msg import ThrottleCmd, SteeringCmd, BrakeCmd, SteeringReport
 from geometry_msgs.msg import TwistStamped
 import math
@@ -59,7 +59,7 @@ class DBWNode(object):
         # SUBSCRIBERS:
         rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_enabled_cb)
         
-        #TODO:add and implement rospy.Subscriber('/current_velocity', Float32, self.current_velocity_cb)
+        rospy.Subscriber('/current_velocity', TwistStamped, self.current_velocity_cb)
         
         self.controller = Controller()
         
@@ -67,7 +67,7 @@ class DBWNode(object):
         #The car features change between sim and real, so this will get the rospy params in to the controller
         self.controller.configure_yaw_controller(wheel_base, steer_ratio, 0, max_lat_accel, max_steer_angle)
         
-        self.control_params = {'target_speed_mps':1, 'current_speed_mps':0, 'turn_z':1}
+        self.control_params = {'target_speed_mps':20, 'current_speed_mps':0, 'turn_z':1}
         
         self.loop()
 
@@ -76,6 +76,9 @@ class DBWNode(object):
             self.controllerEnabled = True  
         else: 
             self.controllerEnabled = False
+    
+    def current_velocity_cb(self, twistMsg):
+        self.control_params['current_speed_mps'] = twistMsg.twist.linear.x
 
     def loop(self):
         rate = rospy.Rate(50) # 50Hz
@@ -105,7 +108,7 @@ class DBWNode(object):
         bcmd.pedal_cmd = brake
         #publishing to the brake will cause issues with the throttle
         #only publish when the brake needs to be applied
-        if(self.brake>.1):
+        if(brake>.1):
             self.brake_pub.publish(bcmd)
 
 
