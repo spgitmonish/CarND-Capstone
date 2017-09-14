@@ -105,7 +105,7 @@ class DBWNode(object):
         bcmd.pedal_cmd = brake
         #publishing to the brake will cause issues with the throttle
         #only publish when the brake needs to be applied
-        if(self.brake>.1):
+        if(brake>.1):
             self.brake_pub.publish(bcmd)
 
 
