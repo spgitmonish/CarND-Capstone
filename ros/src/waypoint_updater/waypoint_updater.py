@@ -49,21 +49,25 @@ class WaypointUpdater(object):
         if self.base_lane.waypoints == None:
             return
 
-        #rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
-        #    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-        #    msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
+        rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
+            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
+            msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
         self.current_pose = msg
 
         # find nearest waypoint
         self.updateNearestWaypointIndex(self.base_lane.waypoints, self.current_pose)
         wp1 = self.nearestWaypointIndex
         rospy.loginfo("closest: %d", wp1)
+
+        # return next n waypoints as a Lane pbject
         waypoints = self.base_lane.waypoints[wp1:(wp1 + LOOKAHEAD_WPS)%len(self.base_lane.waypoints)]
         lane = Lane()
         lane.header.frame_id = '/world'
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
+
+        # TODO:
 
         #1. Calculate Frenet coordinates for current_pose
 
@@ -85,6 +89,7 @@ class WaypointUpdater(object):
 
 
     # update nearest waypoint index by searching nearby values
+    # waypoints are sorted, so search can be optimized
     def updateNearestWaypointIndex(self, waypoints, pose):  
         # func to calculate cartesian distance
         dl = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
@@ -128,7 +133,7 @@ class WaypointUpdater(object):
                 self.nearestWaypointIndex = i+1
                 return
 
-            return # keep same
+            return # keep prev value
 
 
     # Waypoint callback - data from /waypoint_loader
