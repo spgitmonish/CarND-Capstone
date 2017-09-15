@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 PKG = 'waypoint_updater'
-import roslib; roslib.load_manifest(PKG)
+import roslib; roslib.load_manifest(PKG) #not needed with catkin
 
 import sys
 import unittest

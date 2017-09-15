@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+PKG = 'twist_controller'
+import roslib; roslib.load_manifest(PKG) #not needed with catkin
+
 import unittest
 from twist_controller import Controller
 
@@ -64,4 +68,5 @@ class TestControllerMethods(unittest.TestCase):
         self.assertLess(steer, 0, 'Right turn radius not turning right')
         
 if __name__=='__main__':
-    unittest.main()
+    import rostest
+    rostest.rosrun(PKG, 'Twist Controller Tests', TestControllerMethods)
