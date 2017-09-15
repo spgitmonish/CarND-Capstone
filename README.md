@@ -54,3 +54,6 @@ cd CarND-Capstone/ros
 roslaunch launch/site.launch
 ```
 
+### Run Tests locally
+To run the tests, do 'catkin_make' and 'source devel/setup.bash' in the ros directory.  go to the build folder with 'cd build'.  From /ros/build use the command 'make run_tests' and it goes and runs all the unit tests!  It takes some doing to connect the test files with the build system, but now that I have the first couple done, you can use them as an example to add more tests.  You need to add rostest to package.xml as a build dependency.  You need to create a test file xml that has similar xml tags as the .launch files, except the all-important <test> tag that points the build system to the test file.  Then the unit test files themselves need some rostest functions, but you can look at the twist_controller_test.py file for those.
+
