@@ -38,15 +38,106 @@ class WaypointUpdater(object):
 
         # TODO: Add other member variables you need below
 
+        self.current_pose = None
+        self.base_lane = None
+
         rospy.spin()
 
+    # called when car's pose has changed
+    # respond by emitting next set of final waypoints
     def pose_cb(self, msg):
-        # TODO: Implement
-        pass
+        if self.base_lane.waypoints == None:
+            return
 
-    def waypoints_cb(self, waypoints):
-        # TODO: Implement
-        pass
+        #rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
+        #    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
+        #    msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
+        self.current_pose = msg
+
+        # find nearest waypoint
+        self.updateNearestWaypointIndex(self.base_lane.waypoints, self.current_pose)
+        wp1 = self.nearestWaypointIndex
+        rospy.loginfo("closest: %d", wp1)
+        waypoints = self.base_lane.waypoints[wp1:(wp1 + LOOKAHEAD_WPS)%len(self.base_lane.waypoints)]
+        lane = Lane()
+        lane.header.frame_id = '/world'
+        lane.header.stamp = rospy.Time(0)
+        lane.waypoints = waypoints
+        self.final_waypoints_pub.publish(lane)
+
+        #1. Calculate Frenet coordinates for current_pose
+
+        #2. Calculate velocity in Frenet space
+
+        #3. FSM to plan route
+
+        #4. Compute final Frenet coordinate at time Tr (end of trajectory)
+
+        #5. Fit polynomical jerk minimizing trajectory
+
+        #6. Select points for spline, convert them to map coordinates
+
+        #7. Generate splines for X and Y
+
+        #7. Generate map coordinate points as fixed time intervals (t=0.2)
+
+
+
+
+    # update nearest waypoint index by searching nearby values
+    def updateNearestWaypointIndex(self, waypoints, pose):  
+        # func to calculate cartesian distance
+        dl = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
+
+        # previous nearest point not known, do exhaustive search
+        # todo: improve with binary search
+        if self.nearestWaypointIndex == -1:    
+            r = [(dl(wp.pose.pose.position, pose.pose.position), i) for i,wp in enumerate(waypoints)]
+            self.nearestWaypointIndex = min(r, key=lambda x: x[0])[1]
+            return
+
+        # previous nearest waypoint known, so scan points immediately after (& before)
+        else:
+            numpoints = len(waypoints)
+            d = dl(waypoints[self.nearestWaypointIndex].pose.pose.position, pose.pose.position)
+            # scan right
+            i = self.nearestWaypointIndex
+            d1 = d
+            found = False
+            while True:
+                i = (i + 1) % numpoints
+                d2 = dl(waypoints[i].pose.pose.position, pose.pose.position)
+                if d2 > d1: break
+                d1 = d2
+                found = True
+            if found:
+                self.nearestWaypointIndex = i-1
+                return
+
+            # scan left
+            i = self.nearestWaypointIndex
+            d1 = d
+            found = False
+            while True:
+                i = (i - 1) % numpoints
+                d2 = dl(waypoints[i].pose.pose.position, pose.pose.position)
+                if d2 > d1: break
+                d1 = d2
+                found = True
+            if found:
+                self.nearestWaypointIndex = i+1
+                return
+
+            return # keep same
+
+
+    # Waypoint callback - data from /waypoint_loader
+    # I expect this to be constant, so we cache it and dont handle beyond 1st call
+    def waypoints_cb(self, base_lane):
+        if self.base_lane == None:
+            rospy.loginfo("waypoints_cb::%d", len(base_lane.waypoints))
+            self.nearestWaypointIndex = -1
+            self.base_lane = base_lane
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
@@ -56,12 +147,16 @@ class WaypointUpdater(object):
         # TODO: Callback for /obstacle_waypoint message. We will implement it later
         pass
 
+    # get velocity of waypoint object
     def get_waypoint_velocity(self, waypoint):
         return waypoint.twist.twist.linear.x
 
+    # set velocity at specified waypoint index
     def set_waypoint_velocity(self, waypoints, waypoint, velocity):
         waypoints[waypoint].twist.twist.linear.x = velocity
 
+    # arguments: wapoints and two waypoint indices
+    # returns distance between the two waypoints
     def distance(self, waypoints, wp1, wp2):
         dist = 0
         dl = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
