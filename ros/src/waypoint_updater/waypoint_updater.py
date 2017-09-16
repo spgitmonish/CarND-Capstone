@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import rospy
+import tf
 from geometry_msgs.msg import PoseStamped
 from styx_msgs.msg import Lane, Waypoint
 
@@ -26,6 +27,9 @@ MAX_SPEED = 20 # m/s
 
 def cartesian_distance(a, b):
     return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
+
+def distance2d(x1, y1, x2, y2):
+    return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
 
 class WaypointUpdater(object):
     def __init__(self):
@@ -55,15 +59,17 @@ class WaypointUpdater(object):
         if self.base_waypoints == None:
             return
 
-        rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
-            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-            msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
+        #rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
+        #    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
+        #    msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
         self.current_pose = msg
 
         # find nearest waypoint
         wp1 = self.getNearestWaypointIndex(self.current_pose)
         self.nearestWaypointIndex = wp1
-        rospy.loginfo("closest: %d", wp1)
+        #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp1, *self.get_waypoint_coordinate(wp1))
+
+
 
         """
         # index of trajectory end
@@ -88,8 +94,8 @@ class WaypointUpdater(object):
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
 
-
-
+        frenet_s, frenet_d = self.getFrenetCoordinate()
+        rospy.loginfo("Frenet: %f, %f", frenet_s, frenet_d)
 
         # TODO:
 
@@ -189,43 +195,50 @@ class WaypointUpdater(object):
             return self.nearestWaypointIndex# keep prev value
 
     def getFrenetCoordinate(self):
-
         # next waypoint for current position
-        x = self.current_pose.position.x
-        y = self.current_pose.position.y
-        roll,pitch,yaw = tf.euler_from_quaternion(self.current_pose.orientation)
+        x = self.current_pose.pose.position.x
+        y = self.current_pose.pose.position.y
+        roll,pitch,yaw = tf.transformations.euler_from_quaternion((
+            self.current_pose.pose.orientation.x,
+            self.current_pose.pose.orientation.y,
+            self.current_pose.pose.orientation.z,
+            self.current_pose.pose.orientation.w))
         map_x,map_y = self.get_waypoint_coordinate(self.nearestWaypointIndex)
         heading = math.atan2( (map_y-y),(map_x-x) )
-        angle = abs(yaw-heading)
+        angle = math.fabs(yaw-heading)
 
         nextWaypoint = self.nearestWaypointIndex
-        if angle > pi()/4:
+        if angle > math.pi/4:
             nextWaypoint += 1
 
         prevWaypoint = (nextWaypoint - 1) % self.num_waypoints
 
         next_x, next_y = self.get_waypoint_coordinate(nextWaypoint)
-        x_x, x_y = self.get_waypoint_coordinate(prevWaypoint)
+        prev_x, prev_y = self.get_waypoint_coordinate(prevWaypoint)
 
         n_x = next_x - prev_x
         n_y = next_y - prev_y
 
-        // find the projection of x onto n
+        x_x = x - prev_x
+        x_y = y - prev_y
+
+        # find the projection of x onto n
         proj_norm = (x_x*n_x+x_y*n_y)/(n_x*n_x+n_y*n_y);
         proj_x = proj_norm*n_x;
         proj_y = proj_norm*n_y;
 
-        frenet_d = math.sqrt( (proj_x-x_x)**2 + (proj_y-x_y)**2 )
+        frenet_d = distance2d(proj_x, proj_y, x_x, x_y)
 
         #see if d value is positive or negative by comparing it to a center point
-        center_x = 1000-x_x
-        center_y = 2000-x_y
-        centerToPos = math.sqrt( (center_x-x_x)**2 + (center_y-x_y)**2 )
-        centerToRef = math.sqrt( (center_x-proj_x)**2 + (center_y-proj_y)**2 )
+        center_x = 1000-prev_x
+        center_y = 2000-prev_y
+        centerToPos = distance2d(center_x, center_y, x_x, x_y)
+        centerToRef = distance2d(center_x, center_y, proj_x, proj_y)
         if centerToPos <= centerToRef:
             frenet_d *= -1
 
-        frenet_s = self.base_waypoint_distances[wp]
+        frenet_s = self.base_waypoint_distances[prevWaypoint]
+        frenet_s += distance2d(0, 0, proj_x, proj_y)
         return (frenet_s, frenet_d)
 
 
