@@ -7,6 +7,7 @@ from styx_msgs.msg import Lane, Waypoint
 
 import math
 import numpy as np
+from scipy import interpolate
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -23,13 +24,49 @@ as well as to verify your TL classifier.
 '''
 
 LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
-MAX_SPEED = 20 # m/s
+SPEED_LIMIT = 20.0 # m/s
+TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 
 def cartesian_distance(a, b):
     return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
 
 def distance2d(x1, y1, x2, y2):
     return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
+
+def JMT(start, end, T):
+    """
+    Calculate the Jerk Minimizing Trajectory that connects the initial state
+    to the final state in time T.
+
+    INPUTS
+
+    start - the vehicles start location given as a length three array corresponding to initial values of [s, s_dot, s_double_dot]
+    end   - the desired end state for vehicle. Like "start" this is a length three array.
+    T     - The duration, in seconds, over which this maneuver should occur.
+
+    OUTPUT: an array of length 6, each value corresponding to a coefficent in the polynomial 
+    s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
+
+    EXAMPLE:
+    > JMT( [0, 10, 0], [10, 10, 0], 1)
+    [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
+    """
+    t2 = T * T
+    t3 = t2 * T
+    t4 = t2 * t2
+    t5 = t3 * t2
+    Tmat = np.array( [[t3, t4, t5], [3*t2, 4*t3, 5*t4], [6*T, 12*t2, 20*t3]] )
+
+    Sf = end[0]
+    Sf_d = end[1]
+    Sf_dd = end[2]
+    Si = start[0]
+    Si_d = start[1]
+    Si_dd = start[2]
+
+    Sfmat = np.array( [[Sf - (Si + Si_d*T + 0.5*Si_dd*T*T)], [Sf_d - (Si_d + Si_dd*T)], [Sf_dd - Si_dd]] )
+    alpha = np.linalg.inv(Tmat).dot(Sfmat)
+    return (Si, Si_d, 0.5*Si_dd, alpha[0], alpha[1], alpha[2])
 
 class WaypointUpdater(object):
     def __init__(self):
@@ -50,6 +87,8 @@ class WaypointUpdater(object):
         self.base_waypoints = None
         self.num_waypoints = 0
         self.base_waypoint_distances = None
+        self.Scoeffs = None
+        self.Dcoeffs = None
 
         rospy.spin()
 
@@ -69,23 +108,6 @@ class WaypointUpdater(object):
         self.nearestWaypointIndex = wp1
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp1, *self.get_waypoint_coordinate(wp1))
 
-
-
-        """
-        # index of trajectory end
-        wp2 = (wp1 + LOOKAHEAD_WPS)%self.num_waypoints
-
-        # distance to end of trajectory
-        d = self.distance(waypoints, wp1, wp2)
-
-        # time to reach end
-        t = d / MAX_SPEED
-
-        p1 = self.base_waypoints[wp1].pose.pose.position
-        p2 = self.base_waypoints[wp1].pose.pose.position
-        jmt = JMT([], [], t)
-        """
-
         # return next n waypoints as a Lane pbject
         waypoints = self.base_waypoints[wp1:(wp1 + LOOKAHEAD_WPS)%self.num_waypoints]
         lane = Lane()
@@ -93,62 +115,70 @@ class WaypointUpdater(object):
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
+        return
 
-        frenet_s, frenet_d = self.getFrenetCoordinate()
-        rospy.loginfo("Frenet: %f, %f", frenet_s, frenet_d)
 
         # TODO:
 
         #1. Calculate Frenet coordinates for current_pose
+        car_s, car_d = self.getFrenetCoordinate()
+        rospy.loginfo("Frenet: %f, %f", frenet_s, frenet_d)
+
 
         #2. Calculate velocity in Frenet space
+        if self.Scoeffs == None:
+            car_us = 0
+            car_as = 0
+            car_ud = 0
+            car_ad = 0
+        else:
+            # TODO: calc speed, accel from JMT
+
 
         #3. FSM to plan route
+        targetSpeed = SPEED_LIMIT
+        tr_T = LOOKAHEAD_WPS  * 0.02    # generate points @ 0.02 apart each
 
         #4. Compute final Frenet coordinate at time Tr (end of trajectory)
+        accel = min((targetSpeed - us)*(SPEED_LIMIT/TIME_TO_MAX), (SPEED_LIMIT/TIME_TO_MAX));
+        final_s = car_s + car_us * tr_T + (0.5 * accel * tr_T * tr_T) # s=ut+1/2 at^2
+        final_vs = car_us + accel * tr_T # v=u+at
+        final_d = 0 # keep in lane
+        final_vd = (final_d-car_d)/tr_T # v=d/t
 
         #5. Fit polynomical jerk minimizing trajectory
+        self.Scoeffs = JMT((car_s, car_us, car_as), (final_s, final_vs, 0), tr_T)
+        self.Dcoeffs = JMT((car_d, car_ud, car_ad ), (final_d, final_vd, 0), tr_T)
 
         #6. Select points for spline, convert them to map coordinates
+        Xpts = []
+        Ypts = []
+        Tpts = []
+
+        # TODO: select 5 points for spline generation
 
         #7. Generate splines for X and Y
+        x_spline = interpolate.InterpolatedUnivariateSpline(Xpts, Tpts)
+        y_spline = interpolate.InterpolatedUnivariateSpline(Ypts, Tpts)
 
-        #7. Generate map coordinate points as fixed time intervals (t=0.2)
+        #7. Generate map coordinate points as fixed time intervals (t=0.02)
+        waypoints = []
+        for i in range(LOOKAHEAD_WPS):
+            p = Waypoint()
+            p.pose.pose.position.x = x_spline(i*0.02)
+            p.pose.pose.position.y = y_spline(i*0.02)
+            p.pose.pose.position.z = 0
+            q = self.quaternion_from_yaw(float(wp['yaw']))
+            p.pose.pose.orientation = Quaternion(*q)
+            p.twist.twist.linear.x = float(self.velocity*0.27778)
+            waypoints.append(p)
 
-    def JMT(start, end, T):
-        """
-        Calculate the Jerk Minimizing Trajectory that connects the initial state
-        to the final state in time T.
+        lane = Lane()
+        lane.header.frame_id = '/world'
+        lane.header.stamp = rospy.Time(0)
+        lane.waypoints = waypoints
+        self.final_waypoints_pub.publish(lane)
 
-        INPUTS
-
-        start - the vehicles start location given as a length three array corresponding to initial values of [s, s_dot, s_double_dot]
-        end   - the desired end state for vehicle. Like "start" this is a length three array.
-        T     - The duration, in seconds, over which this maneuver should occur.
-
-        OUTPUT: an array of length 6, each value corresponding to a coefficent in the polynomial 
-        s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
-
-        EXAMPLE:
-        > JMT( [0, 10, 0], [10, 10, 0], 1)
-        [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
-        """
-        t2 = T * T
-        t3 = t2 * T
-        t4 = t2 * t2
-        t5 = t3 * t2
-        Tmat = np.array( [[t3, t4, t5], [3*t2, 4*t3, 5*t4], [6*T, 12*t2, 20*t3]] )
-
-        Sf = end[0]
-        Sf_d = end[1]
-        Sf_dd = end[2]
-        Si = start[0]
-        Si_d = start[1]
-        Si_dd = start[2]
-
-        Sfmat = np.array( [[Sf - (Si + Si_d*T + 0.5*Si_dd*T*T)], [Sf_d - (Si_d + Si_dd*T)], [Sf_dd - Si_dd]] )
-        alpha = np.linalg.inv(Tmat).dot(Sfmat)
-        return (Si, Si_d, 0.5*Si_dd, alpha[0], alpha[1], alpha[2])
 
     # update nearest waypoint index by searching nearby values
     # waypoints are sorted, so search can be optimized
