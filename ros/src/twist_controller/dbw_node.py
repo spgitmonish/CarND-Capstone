@@ -37,7 +37,7 @@ class DBWNode(object):
 
         vehicle_mass = rospy.get_param('~vehicle_mass', 1736.35)
         fuel_capacity = rospy.get_param('~fuel_capacity', 13.5)
-        brake_deadband = rospy.get_param('~brake_deadband', .1)
+        self.brake_deadband = rospy.get_param('~brake_deadband', .1)
         decel_limit = rospy.get_param('~decel_limit', -5)
         accel_limit = rospy.get_param('~accel_limit', 1.)
         wheel_radius = rospy.get_param('~wheel_radius', 0.2413)
@@ -67,7 +67,7 @@ class DBWNode(object):
         #The car features change between sim and real, so this will get the rospy params in to the controller
         self.controller.configure_yaw_controller(wheel_base, steer_ratio, 0, max_lat_accel, max_steer_angle)
         
-        self.control_params = {'target_speed_mps':20, 'current_speed_mps':0, 'turn_z':1}
+        self.control_params = {'target_speed_mps':10, 'current_speed_mps':0, 'turn_z':1}
         
         self.loop()
 
@@ -109,7 +109,7 @@ class DBWNode(object):
         bcmd.pedal_cmd = brake
         #publishing to the brake will cause issues with the throttle
         #only publish when the brake needs to be applied
-        if(brake>.1):
+        if(brake>self.brake_deadband):
             self.brake_pub.publish(bcmd)
 
 
