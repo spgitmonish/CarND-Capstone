@@ -52,7 +52,7 @@ class TestControllerMethods(unittest.TestCase):
         kw = {'current_speed_mps':5,'target_speed_mps':0}
         throttle, brake, steer = c.control(**kw)
         self.assertEqual(throttle, 0, 'Throttle not 0 for decel from 5 to 0 m/s')
-        self.assertGreater(brake, 0, 'Brake not 0 for accelerating from 5 to 0 m/s')
+        self.assertGreater(brake, 0, 'Brake not 0 for decel from 5 to 0 m/s')
 
     def test_yaw_controller_negative_steer_for_negative_radius(self):
         c = Controller()
