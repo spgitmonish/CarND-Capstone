@@ -117,7 +117,7 @@ class WaypointUpdater(object):
         self.final_waypoints_pub.publish(lane)
         return
 
-
+"""
         # TODO:
 
         #1. Calculate Frenet coordinates for current_pose
@@ -178,7 +178,7 @@ class WaypointUpdater(object):
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
-
+"""
 
     # update nearest waypoint index by searching nearby values
     # waypoints are sorted, so search can be optimized
