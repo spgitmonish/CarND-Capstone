@@ -188,6 +188,46 @@ class WaypointUpdater(object):
 
             return self.nearestWaypointIndex# keep prev value
 
+    def getFrenetCoordinate(self):
+
+        # next waypoint for current position
+        x = self.current_pose.position.x
+        y = self.current_pose.position.y
+        roll,pitch,yaw = tf.euler_from_quaternion(self.current_pose.orientation)
+        map_x,map_y = self.get_waypoint_coordinate(self.nearestWaypointIndex)
+        heading = math.atan2( (map_y-y),(map_x-x) )
+        angle = abs(yaw-heading)
+
+        nextWaypoint = self.nearestWaypointIndex
+        if angle > pi()/4:
+            nextWaypoint += 1
+
+        prevWaypoint = (nextWaypoint - 1) % self.num_waypoints
+
+        next_x, next_y = self.get_waypoint_coordinate(nextWaypoint)
+        x_x, x_y = self.get_waypoint_coordinate(prevWaypoint)
+
+        n_x = next_x - prev_x
+        n_y = next_y - prev_y
+
+        // find the projection of x onto n
+        proj_norm = (x_x*n_x+x_y*n_y)/(n_x*n_x+n_y*n_y);
+        proj_x = proj_norm*n_x;
+        proj_y = proj_norm*n_y;
+
+        frenet_d = math.sqrt( (proj_x-x_x)**2 + (proj_y-x_y)**2 )
+
+        #see if d value is positive or negative by comparing it to a center point
+        center_x = 1000-x_x
+        center_y = 2000-x_y
+        centerToPos = math.sqrt( (center_x-x_x)**2 + (center_y-x_y)**2 )
+        centerToRef = math.sqrt( (center_x-proj_x)**2 + (center_y-proj_y)**2 )
+        if centerToPos <= centerToRef:
+            frenet_d *= -1
+
+        frenet_s = self.base_waypoint_distances[wp]
+        return (frenet_s, frenet_d)
+
 
     # Waypoint callback - data from /waypoint_loader
     # I expect this to be constant, so we cache it and dont handle beyond 1st call
@@ -224,6 +264,9 @@ class WaypointUpdater(object):
     # set velocity at specified waypoint index
     def set_waypoint_velocity(self, waypoints, waypoint, velocity):
         waypoints[waypoint].twist.twist.linear.x = velocity
+
+    def get_waypoint_coordinate(self, wp):
+        return (self.base_waypoints[wp].pose.pose.position.x, self.base_waypoints[wp].pose.pose.position.y)
 
     # arguments: wapoints and two waypoint indices
     # returns distance between the two waypoints
