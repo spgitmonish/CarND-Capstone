@@ -4,6 +4,7 @@ import roslib; roslib.load_manifest(PKG) #not needed with catkin
 
 import unittest
 from twist_controller import Controller
+import rospy
 
 class TestControllerMethods(unittest.TestCase):
     

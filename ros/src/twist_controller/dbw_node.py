@@ -58,8 +58,8 @@ class DBWNode(object):
 
         # SUBSCRIBERS:
         rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_enabled_cb)
-        
         rospy.Subscriber('/current_velocity', TwistStamped, self.current_velocity_cb)
+        rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_command_cb)
         
         self.controller = Controller()
         
@@ -80,6 +80,10 @@ class DBWNode(object):
     
     def current_velocity_cb(self, twistMsg):
         self.control_params['current_speed_mps'] = twistMsg.twist.linear.x
+
+    def twist_command_cb(self, twistMsg):
+        self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
+        self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):
         rate = rospy.Rate(50) # 50Hz
