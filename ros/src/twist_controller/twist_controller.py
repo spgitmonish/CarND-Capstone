@@ -40,6 +40,3 @@ class Controller(object):
             self.steer = self.steer_pid.step(kwargs['turn_z'], sample_time_s)
                     
         return self.throttle, self.brake, self.steer
-
-    #def configure_yaw_controller(self, wheel_base,steer_ratio, min_speed, max_lat_accel, max_steer_angle):
-    #    self.yaw_con = YawController(wheel_base, steer_ratio, min_speed, max_lat_accel, max_steer_angle)
