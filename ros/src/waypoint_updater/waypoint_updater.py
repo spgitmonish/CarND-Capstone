@@ -23,7 +23,7 @@ as well as to verify your TL classifier.
 
 '''
 
-LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
+LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
 SPEED_LIMIT = 20.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 
@@ -244,6 +244,7 @@ class WaypointUpdater(object):
                 self.base_waypoint_distances.append(gap)
                 pos1 = pos2
             rospy.loginfo("track length: %f", d)
+            self.base_waypoint_sub.unregister()
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
