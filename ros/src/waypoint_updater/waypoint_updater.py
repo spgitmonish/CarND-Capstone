@@ -32,8 +32,8 @@ FSM_GO = 0
 FSM_STOPPING = 1
 
 
-def distance2d(x1, y1, x2, y2):
-    return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
+def cartesian_distance(a, b):
+    return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
 
 class WaypointUpdater(object):
     def __init__(self):
