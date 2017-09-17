@@ -61,11 +61,11 @@ class DBWNode(object):
         rospy.Subscriber('/current_velocity', TwistStamped, self.current_velocity_cb)
         rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_command_cb)
         
-        self.controller = Controller()
+        self.controller = Controller(max_steer_angle)
         
         #The yaw controller is configured here to keep rospy out of the controller file
         #The car features change between sim and real, so this will get the rospy params in to the controller
-        self.controller.configure_yaw_controller(wheel_base, steer_ratio, 0, max_lat_accel, max_steer_angle)
+        #self.controller.configure_yaw_controller(wheel_base, steer_ratio, 0, max_lat_accel, max_steer_angle)
         
         self.control_params = {'target_speed_mps':10, 'current_speed_mps':0, 'turn_z':1}
         
@@ -91,10 +91,8 @@ class DBWNode(object):
         self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):
-        rate = rospy.Rate(5) # 50Hz
+        rate = rospy.Rate(10) # 50Hz
         while not rospy.is_shutdown():
-            # TODO: Get predicted throttle, brake, and steering using `twist_controller`
-            # You should only publish the control commands if dbw is enabled
             throttle, brake, steer = self.controller.control(**self.control_params)
             if self.controllerEnabled:
                 self.publish(throttle, brake, steer)
