@@ -24,14 +24,13 @@ as well as to verify your TL classifier.
 '''
 
 LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
-SPEED_LIMIT = 20.0 # m/s
+SPEED_LIMIT = 40.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
+LIGHT_BREAKING_DISTANCE_METERS = 20 # meters
 
 FSM_GO = 0
 FSM_STOPPING = 1
 
-def cartesian_distance(a, b):
-    return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
 
 def distance2d(x1, y1, x2, y2):
     return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
@@ -41,7 +40,7 @@ class WaypointUpdater(object):
 
         rospy.init_node('waypoint_updater')
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
-        rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
+        self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
         rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
 
         # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
@@ -56,19 +55,15 @@ class WaypointUpdater(object):
         self.base_waypoints = None
         self.num_waypoints = 0
         self.base_waypoint_distances = None
-        self.Scoeffs = None
-        self.Dcoeffs = None
 
         """
-        closest waypoint: 289; x,y: (1145.720000,1184.640000)
+        light 1: closest waypoint: 289; x,y: (1145.720000,1184.640000)
+        light 2: closest waypoint: 750; x,y: (1556.820000,1158.860000)
 
         """
-        self.traffic_light = PoseStamped()
-        self.traffic_light.pose = Pose()
-        self.traffic_light.pose.position = Point()
-        self.traffic_light.pose.position.x = 1145.72
-        self.traffic_light.pose.position.y = 1184.64
+        self.traffic_light = 750
 
+        # initial state machine state
         self.fsm_state = FSM_GO
 
         rospy.spin()
@@ -101,25 +96,35 @@ class WaypointUpdater(object):
             waypoints = self.base_waypoints[wp_start:] + self.base_waypoints[0:wp_end]
 
         if self.fsm_state == FSM_GO:
-            if self.traffic_light != None:
-                traffic_light_wp = self.getNearestWaypointIndex(self.traffic_light)
-                if abs(traffic_light_wp - self.nearestWaypointIndex) < LOOKAHEAD_WPS:
-                    rospy.loginfo("slowing for traffic light: %d => %d", self.nearestWaypointIndex, traffic_light_wp)
+            # Do we have a traffic light in the vicinity ?
+            if self.traffic_light != None and abs(self.traffic_light - wp_start) < LOOKAHEAD_WPS:
+
+                # is it close enough to start stopping for ?
+                distance = sum(self.base_waypoint_distances[wp_start : self.traffic_light])
+                if distance < LIGHT_BREAKING_DISTANCE_METERS:
+                    rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
                     self.fsm_state = FSM_STOPPING
+                    # simulates a 10 - second stop
                     rospy.Timer(rospy.Duration.from_sec(10), self.traffic_lights_off, oneshot=True)
-                    self.decelarate(waypoints,  wp_start, traffic_light_wp)
+                    self.decelarate(waypoints,  wp_start, self.traffic_light)
                 else:
+                    # continue FSM_GO
                     self.accelarate(waypoints, wp_start, wp_end)
             else:
+                # continue FSM_GO
                 self.accelarate(waypoints, wp_start, wp_end)
-        else: # STOPPING
+
+
+        else: # self.fsm_state == FSM_STOPPING
+
             # wait for light to go off
-            if self.traffic_light == None:
+            if self.traffic_light != None:
+                # continue decelarating
+                self.decelarate(waypoints, wp_start, self.traffic_light)
+            else:
+                # back to FSM_GO
                 self.fsm_state = FSM_GO
                 self.accelarate(waypoints, wp_start, wp_end)
-            else:
-                traffic_light_wp = self.getNearestWaypointIndex(self.traffic_light)
-                self.decelarate(waypoints, wp_start, traffic_light_wp)
         
         lane = Lane()
         lane.header.frame_id = '/world'
@@ -131,7 +136,7 @@ class WaypointUpdater(object):
     def accelarate(self, waypoints, wp_start, wp_end):
         # accelaration
         a = SPEED_LIMIT/TIME_TO_MAX
-        rospy.loginfo("accelarating: %f", a)
+        #rospy.loginfo("accelarating: %f", a)
 
         # get distances corresponding to waypoints
         if wp_end > wp_start:
