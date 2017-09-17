@@ -9,9 +9,9 @@ MAX_SPEED_MPH = 50
 class Controller(object):
     def __init__(self, *args, **kwargs):
         #accelerator PID
-        self.gainp=1.
-        self.gaini=0.
-        self.gaind=0.
+        self.gainp=.2
+        self.gaini=.01
+        self.gaind=.005
         #pid will use m/s, all velocities must be converted from mph to m/s
         self.max_speed_mps = MAX_SPEED_MPH*ONE_MPH
         self.min_speed_mps = 0

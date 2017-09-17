@@ -69,6 +69,10 @@ class DBWNode(object):
         
         self.control_params = {'target_speed_mps':10, 'current_speed_mps':0, 'turn_z':1}
         
+        self.last_throttle = 0
+        self.last_steering = 0
+        self.last_brake =0
+        
         self.loop()
 
     def dbw_enabled_cb(self, isEnabled):
@@ -82,11 +86,12 @@ class DBWNode(object):
         self.control_params['current_speed_mps'] = twistMsg.twist.linear.x
 
     def twist_command_cb(self, twistMsg):
-        self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
+        if twistMsg.twist.linear.x >0:
+            self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
         self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):
-        rate = rospy.Rate(50) # 50Hz
+        rate = rospy.Rate(5) # 50Hz
         while not rospy.is_shutdown():
             # TODO: Get predicted throttle, brake, and steering using `twist_controller`
             # You should only publish the control commands if dbw is enabled
@@ -96,24 +101,29 @@ class DBWNode(object):
             rate.sleep()
 
     def publish(self, throttle, brake, steer):
+        
+        
+        self.last_throttle = throttle
         tcmd = ThrottleCmd()
         tcmd.enable = True
         tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
         tcmd.pedal_cmd = throttle
         self.throttle_pub.publish(tcmd)
 
+        self.last_steering = steer
         scmd = SteeringCmd()
         scmd.enable = True
         scmd.steering_wheel_angle_cmd = steer
         self.steer_pub.publish(scmd)
 
-        bcmd = BrakeCmd()
-        bcmd.enable = True
-        bcmd.pedal_cmd_type = BrakeCmd.CMD_PERCENT
-        bcmd.pedal_cmd = brake
         #publishing to the brake will cause issues with the throttle
         #only publish when the brake needs to be applied
-        if(brake>self.brake_deadband):
+        if(brake>self.brake_deadband and self.last_brake != brake):
+            self.last_brake = brake
+            bcmd = BrakeCmd()
+            bcmd.enable = True
+            bcmd.pedal_cmd_type = BrakeCmd.CMD_PERCENT
+            bcmd.pedal_cmd = brake
             self.brake_pub.publish(bcmd)
 
 
