@@ -26,7 +26,7 @@ class TLDetector(object):
         sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
         '''
-        /vehicle/traffic_lights provides you with the location of the traffic light in 3D map space and 
+        /vehicle/traffic_lights provides you with the location of the traffic light in 3D map space and
         helps you acquire an accurate ground truth data source for the traffic light
         classifier by sending the current color state of all traffic lights in the
         simulator. When testing on the vehicle, the color state will not be available. You'll need to
@@ -49,6 +49,9 @@ class TLDetector(object):
         self.last_wp = -1
         self.state_count = 0
 
+        # File to write label data to
+        self.write_file = open('image_data/labels.csv', 'wb')
+
         rospy.spin()
 
     def pose_cb(self, msg):
@@ -60,6 +63,16 @@ class TLDetector(object):
     def traffic_cb(self, msg):
         self.lights = msg.lights
 
+    def return_light_index(self, pos_x):
+        for index in range(len(self.lights)):
+            light = self.lights[index]
+            if pos_x >= light.pose.pose.position.x - 100 and pos_x <= light.pose.pose.position.x - 20:
+                rospy.loginfo('index:%s', index)
+                rospy.loginfo('light_pos_x:%s', light.pose.pose.position.x)
+                return index
+
+        return None
+
     def image_cb(self, msg):
         """Identifies red lights in the incoming camera image and publishes the index
             of the waypoint closest to the red light to /traffic_waypoint
@@ -70,6 +83,27 @@ class TLDetector(object):
         """
         self.has_image = True
         self.camera_image = msg
+        rospy.loginfo('pose_x:%s', self.pose.pose.position.x)
+        x_pos = self.pose.pose.position.x
+        timestamp = self.pose.header.stamp
+
+        # API to detect the closest light and the state of that light
+        # within a buffer of ~100 before the light and ending at ~20 before
+        light_index = self.return_light_index(x_pos)
+        if light_index == None:
+            rospy.loginfo('No light')
+            state = 3
+        else:
+            state = self.lights[light_index].state
+            rospy.loginfo('Light state:%s', state)
+
+        cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
+        #file_to_write = 'image_data/' + str(x_pos) + '.png'
+        file_to_write = 'image_data/' + str(timestamp) + '.png'
+        cv2.imwrite(file_to_write, cv_image)
+        self.write_file.write(str(timestamp) + ',' + str(state))
+        self.write_file.write('\n')
+        light_wp, state = self.process_traffic_lights()
         light_wp, state = self.process_traffic_lights()
 
         '''
