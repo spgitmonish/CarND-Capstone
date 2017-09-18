@@ -42,32 +42,6 @@ def theta_slope(w1, w2):
     y2 = w2.pose.pose.position.y
     return math.atan2((y2-y1) / (x2-x1))
 
-def interpolate_waypoints(waypoints, distances, a, v):
-    output = []
-    wp = 0
-    theta = theta_slope(waypoints[wp], waypoints[wp+1])
-    for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
-        r = v*t + 0.5*a*(t**2)
-        x = r * math.cos(theta)
-        y = r * math.sin(theta)
-        p = Waypoint()
-        p.pose.pose.position.x = float(x)
-        p.pose.pose.position.y = float(y)
-        p.pose.pose.position.z = waypoints[wp].pose.pose.position.z
-        p.pose.pose.orientation = waypoints[wp].pose.pose.orientation
-        p.twist.twist.linear.x = float(v+a*t)
-        output.append(p)
-
-        if r > distances[wp]:
-            wp += 1
-            theta = theta_slope(waypoints[wp], waypoints[wp+1])
-            v = v + a*0.02
-            if v > SPEED_LIMIT:
-                v = SPEED_LIMIT
-            if v < 0:
-                v = 0
-    return output
-
 class WaypointUpdater(object):
     def __init__(self):
 
@@ -120,8 +94,6 @@ class WaypointUpdater(object):
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
 
         # return next n waypoints as a Lane pbject
-        wp_end = (wp_start + LOOKAHEAD_WPS) % self.num_waypoints
-
         if self.fsm_state == FSM_GO:
             # Do we have a traffic light in the vicinity ?
             if self.traffic_light != None and abs(self.traffic_light - wp_start) < LOOKAHEAD_WPS:
@@ -133,13 +105,13 @@ class WaypointUpdater(object):
                     self.fsm_state = FSM_STOPPING
                     # simulates a 10 - second stop
                     rospy.Timer(rospy.Duration.from_sec(10), self.traffic_lights_off, oneshot=True)
-                    waypoinst = self.decelarate(wp_start, self.traffic_light)
+                    waypoinst = self.decelarate(self.traffic_light)
                 else:
                     # continue FSM_GO
-                    waypoinst = self.accelarate(wp_start, wp_end)
+                    waypoinst = self.accelarate()
             else:
                 # continue FSM_GO
-                waypoinst = self.accelarate(wp_start, wp_end)
+                waypoinst = self.accelarate()
 
 
         else: # self.fsm_state == FSM_STOPPING
@@ -147,11 +119,11 @@ class WaypointUpdater(object):
             # wait for light to go off
             if self.traffic_light != None:
                 # continue decelarating
-                waypoinst = self.decelarate(wp_start, self.traffic_light)
+                waypoinst = self.decelarate(self.traffic_light)
             else:
                 # back to FSM_GO
                 self.fsm_state = FSM_GO
-                waypoinst = self.accelarate(wp_start, wp_end)
+                waypoinst = self.accelarate()
         
         lane = Lane()
         lane.header.frame_id = '/world'
@@ -160,38 +132,53 @@ class WaypointUpdater(object):
         self.final_waypoints_pub.publish(lane)
         return
 
-    def accelarate(self, wp_start, wp_end):
+    def accelarate(self):
         # accelaration
-        a = SPEED_LIMIT/TIME_TO_MAX
         #rospy.loginfo("accelarating: %f", a)
+        return interpolate_waypoints(SPEED_LIMIT/TIME_TO_MAX)
 
+
+    def decelarate(self, wp_end):
         # get distances corresponding to waypoints          
-        if wp_end > wp_start:
-            waypoints = self.base_waypoints[wp_start:wp_end]
-            distances = self.base_waypoint_distances[wp_start:wp_end]
+        if wp_end > self.nearestWaypointIndex:
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp_end]
         else:
-            waypoints = self.base_waypoints[wp_start:] + self.base_waypoints[0:wp_end]
-            distances = self.base_waypoint_distances[wp_start:] + self.base_waypoint_distances[0:wp_end]
-
-        v = self.velocity
-        return interpolate_waypoints(waypoints, distances, a, v)
-
-
-    def decelarate(self, wp_start, wp_end):
-        # get distances corresponding to waypoints          
-        if wp_end > wp_start:
-            waypoints = self.base_waypoints[wp_start:wp_end]
-            distances = self.base_waypoint_distances[wp_start:wp_end]
-        else:
-            waypoints = self.base_waypoints[wp_start:] + self.base_waypoints[0:wp_end]
-            distances = self.base_waypoint_distances[wp_start:] + self.base_waypoint_distances[0:wp_end]
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp_end]
 
         u = self.velocity
         s = sum(distances)
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
-        return interpolate_waypoints(waypoints, distances, a, u)
+        return interpolate_waypoints(a)
+
+    def interpolate_waypoints(self, a):
+        output = []
+        v = self.velocity
+        wp = self.nearestWaypointIndex
+        theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.waypoints[(wp+1) % self.num_waypoints])
+
+        for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
+            r = v*t + 0.5*a*(t**2)
+            x = r * math.cos(theta)
+            y = r * math.sin(theta)
+            p = Waypoint()
+            p.pose.pose.position.x = float(x)
+            p.pose.pose.position.y = float(y)
+            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
+            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+            p.twist.twist.linear.x = float(v+a*t)
+            output.append(p)
+
+            if r > self.base_waypoint_distances[wp % self.num_waypoints]:
+                wp += 1
+                theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.waypoints[(wp+1) % self.num_waypoints])
+                v = v + a*0.02
+                if v > SPEED_LIMIT:
+                    v = SPEED_LIMIT
+                if v < 0:
+                    v = 0
+        return output
 
     # update nearest waypoint index by searching nearby values
     # waypoints are sorted, so search can be optimized
