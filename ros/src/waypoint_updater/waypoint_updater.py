@@ -154,6 +154,15 @@ class WaypointUpdater(object):
 
         u = self.velocity
         s = sum(distances)
+        """
+            v = u + at
+            subst v = 0, gives
+            eq1. a = -u/t
+            substitute in s=ut+0.5at^2
+            s=ut/2
+            t = 2s/u
+            substitute back in eq1. gives a=-u^2/2s
+        """
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
