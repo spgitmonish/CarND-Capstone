@@ -7,7 +7,7 @@ from styx_msgs.msg import Lane, Waypoint
 
 import math
 import numpy as np
-from scipy import interpolate
+from scipy.interpolate import interp1d, splrep, splev
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -22,7 +22,7 @@ current status in `/vehicle/traffic_lights` message. You can use this message to
 as well as to verify your TL classifier.
 
 '''
-
+TIME_PERIOD_PUBLISHED = 1. #sec
 LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
 SPEED_LIMIT = 20.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
@@ -163,24 +163,42 @@ class WaypointUpdater(object):
         output = []
         v = self.velocity
         wp = self.nearestWaypointIndex
-        theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+        if wp_end > self.nearestWaypointIndex:
+            waypoints = self.base_waypoints[self.nearestWaypointIndex:wp_end]
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp_end]
+        else:
+            waypoints = self.base_waypoints[self.nearestWaypointIndex:] + self.base_waypoints[0:wp_end]
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp_end]
 
-        for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
-            r = v*t + 0.5*a*(t**2)
-            x = r * math.cos(theta)
-            y = r * math.sin(theta)
+        x = []
+        y = []
+        t = []
+        wp_idx = 0
+        max_s = self.velocity * TIME_PERIOD_PUBLISHED + 0.5 * a * (TIME_PERIOD_PUBLISHED**2)
+        s = 0
+        while s < max_s:
+            x.append(wp.pose.pose.position.x)
+            y.append(wp.pose.pose.position.y)
+            if a == 0:
+                t.append( s / self.velocity )
+            else:
+                t.append( (math.sqrt(self.velocity**2 + 2*a*s) - self.velocity) / a )
+            s += distances[wp_idx]
+            wp_idx += 1
+
+        #x_spline = interp1d(t, x, kind='cubic')
+        #y_spline = interp1d(t, y, kind='cubic')
+        x_spline = splrep(t, x, k = 5) # qunitic
+        y_spline = splrep(t, y, k = 5)
+
+        for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
             p = Waypoint()
-            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
-            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
+            p.pose.pose.position.x = float(splev(x_spline, t))
+            p.pose.pose.position.y = float(splev(y_spline, t))
             p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
             p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
             p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
             output.append(p)
-
-            if r > self.base_waypoint_distances[wp % self.num_waypoints]:
-                wp += 1
-                theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
-                v = clip(v + a*0.02, 0, SPEED_LIMIT)
         return output
 
     # update nearest waypoint index by searching nearby values
