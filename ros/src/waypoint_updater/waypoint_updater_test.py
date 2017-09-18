@@ -17,8 +17,6 @@ class TestWaypointUpdater(unittest.TestCase):
     def test_initialState(self):
         wu = WaypointUpdater()
         self.assertEqual(wu.fsm_state, 0, 'Init WU be in state FSM_GO(0)') 
-        
-        
 
 if __name__=='__main__':
     import rostest
