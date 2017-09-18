@@ -142,8 +142,8 @@ class WaypointUpdater(object):
     def accelarate(self):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
-        return self.interpolate_waypoints(SPEED_LIMIT/TIME_TO_MAX)
-
+        a = clip(self.velocity - SPEED_LIMIT / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
+        return self.interpolate_waypoints(a)
 
     def decelarate(self, wp_end):
         """
@@ -182,7 +182,7 @@ class WaypointUpdater(object):
         y = []
         t = []
         wp_idx = 0
-        max_s = self.velocity * TIME_PERIOD_PUBLISHED + 0.5 * a * (TIME_PERIOD_PUBLISHED**2)
+        max_s = (self.velocity * TIME_PERIOD_PUBLISHED) + (0.5 * a * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
         s = 0
         while s < max_s:
             x.append(wp.pose.pose.position.x)
