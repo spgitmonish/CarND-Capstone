@@ -146,23 +146,22 @@ class WaypointUpdater(object):
 
 
     def decelarate(self, wp_end):
-        # get distances corresponding to waypoints          
-        if wp_end > self.nearestWaypointIndex:
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp_end]
-        else:
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp_end]
-
-        u = self.velocity
-        s = sum(distances)
         """
+        solve for -ve accelaration requried to stop car at given waypoint
             v = u + at
             subst v = 0, gives
             eq1. a = -u/t
             substitute in s=ut+0.5at^2
-            s=ut/2
+            s = ut/2
             t = 2s/u
-            substitute back in eq1. gives a=-u^2/2s
+            substitute back in eq1. gives a = -u^2/2s
         """
+        if wp_end > self.nearestWaypointIndex:
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp_end]
+        else:
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp_end]
+        u = self.velocity
+        s = sum(distances)
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
