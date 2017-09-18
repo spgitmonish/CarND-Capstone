@@ -23,14 +23,20 @@ as well as to verify your TL classifier.
 
 '''
 
-LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
-SPEED_LIMIT = 10.0 # m/s
+LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
+SPEED_LIMIT = 20.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 LIGHT_BREAKING_DISTANCE_METERS = 20 # meters
 
 FSM_GO = 0
 FSM_STOPPING = 1
 
+def clip(val, min, max):
+    if val < min:
+        return min
+    if val > max:
+        return max
+    return val
 
 def cartesian_distance(a, b):
     return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
@@ -40,7 +46,7 @@ def theta_slope(w1, w2):
     y1 = w1.pose.pose.position.y
     x2 = w2.pose.pose.position.x
     y2 = w2.pose.pose.position.y
-    return math.atan2((y2-y1) / (x2-x1))
+    return math.atan2((y2-y1), (x2-x1))
 
 class WaypointUpdater(object):
     def __init__(self):
@@ -56,6 +62,7 @@ class WaypointUpdater(object):
         # TODO: Add other member variables you need below
 
         self.current_pose = None
+        self.velocity = 0
         self.base_lane = None
         self.base_waypoints = None
         self.num_waypoints = 0
@@ -104,14 +111,14 @@ class WaypointUpdater(object):
                     rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
                     self.fsm_state = FSM_STOPPING
                     # simulates a 10 - second stop
-                    rospy.Timer(rospy.Duration.from_sec(10), self.traffic_lights_off, oneshot=True)
-                    waypoinst = self.decelarate(self.traffic_light)
+                    rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
+                    waypoints = self.decelarate(self.traffic_light)
                 else:
                     # continue FSM_GO
-                    waypoinst = self.accelarate()
+                    waypoints = self.accelarate()
             else:
                 # continue FSM_GO
-                waypoinst = self.accelarate()
+                waypoints = self.accelarate()
 
 
         else: # self.fsm_state == FSM_STOPPING
@@ -119,11 +126,11 @@ class WaypointUpdater(object):
             # wait for light to go off
             if self.traffic_light != None:
                 # continue decelarating
-                waypoinst = self.decelarate(self.traffic_light)
+                waypoints = self.decelarate(self.traffic_light)
             else:
                 # back to FSM_GO
                 self.fsm_state = FSM_GO
-                waypoinst = self.accelarate()
+                waypoints = self.accelarate()
         
         lane = Lane()
         lane.header.frame_id = '/world'
@@ -135,7 +142,7 @@ class WaypointUpdater(object):
     def accelarate(self):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
-        return interpolate_waypoints(SPEED_LIMIT/TIME_TO_MAX)
+        return self.interpolate_waypoints(SPEED_LIMIT/TIME_TO_MAX)
 
 
     def decelarate(self, wp_end):
@@ -150,34 +157,30 @@ class WaypointUpdater(object):
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
-        return interpolate_waypoints(a)
+        return self.interpolate_waypoints(a)
 
     def interpolate_waypoints(self, a):
         output = []
         v = self.velocity
         wp = self.nearestWaypointIndex
-        theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.waypoints[(wp+1) % self.num_waypoints])
+        theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
 
         for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
             r = v*t + 0.5*a*(t**2)
             x = r * math.cos(theta)
             y = r * math.sin(theta)
             p = Waypoint()
-            p.pose.pose.position.x = float(x)
-            p.pose.pose.position.y = float(y)
+            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
+            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
             p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
             p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
-            p.twist.twist.linear.x = float(v+a*t)
+            p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
             output.append(p)
 
             if r > self.base_waypoint_distances[wp % self.num_waypoints]:
                 wp += 1
-                theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.waypoints[(wp+1) % self.num_waypoints])
-                v = v + a*0.02
-                if v > SPEED_LIMIT:
-                    v = SPEED_LIMIT
-                if v < 0:
-                    v = 0
+                theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+                v = clip(v + a*0.02, 0, SPEED_LIMIT)
         return output
 
     # update nearest waypoint index by searching nearby values
@@ -191,7 +194,6 @@ class WaypointUpdater(object):
         if self.nearestWaypointIndex == -1:    
             r = [(dl(wp.pose.pose.position, pose.pose.position), i) for i,wp in enumerate(self.base_waypoints)]
             return min(r, key=lambda x: x[0])[1]
-
         # previous nearest waypoint known, so scan points immediately after (& before)
         else:
             
@@ -223,7 +225,6 @@ class WaypointUpdater(object):
                 return i+1
 
             return self.nearestWaypointIndex# keep prev value
-
 
     def velocity_cb(self, vel):
         self.velocity = vel.twist.linear.x
