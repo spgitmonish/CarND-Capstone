@@ -24,7 +24,7 @@ as well as to verify your TL classifier.
 '''
 
 LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
-SPEED_LIMIT = 40.0 # m/s
+SPEED_LIMIT = 10.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 LIGHT_BREAKING_DISTANCE_METERS = 20 # meters
 
@@ -34,6 +34,39 @@ FSM_STOPPING = 1
 
 def cartesian_distance(a, b):
     return math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
+
+def theta_slope(w1, w2):
+    x1 = w1.pose.pose.position.x
+    y1 = w1.pose.pose.position.y
+    x2 = w2.pose.pose.position.x
+    y2 = w2.pose.pose.position.y
+    return math.atan2((y2-y1) / (x2-x1))
+
+def interpolate_waypoints(waypoints, distances, a, v):
+    output = []
+    wp = 0
+    theta = theta_slope(waypoints[wp], waypoints[wp+1])
+    for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
+        r = v*t + 0.5*a*(t**2)
+        x = r * math.cos(theta)
+        y = r * math.sin(theta)
+        p = Waypoint()
+        p.pose.pose.position.x = float(x)
+        p.pose.pose.position.y = float(y)
+        p.pose.pose.position.z = waypoints[wp].pose.pose.position.z
+        p.pose.pose.orientation = waypoints[wp].pose.pose.orientation
+        p.twist.twist.linear.x = float(v+a*t)
+        output.append(p)
+
+        if r > distances[wp]:
+            wp += 1
+            theta = theta_slope(waypoints[wp], waypoints[wp+1])
+            v = v + a*0.02
+            if v > SPEED_LIMIT:
+                v = SPEED_LIMIT
+            if v < 0:
+                v = 0
+    return output
 
 class WaypointUpdater(object):
     def __init__(self):
@@ -88,10 +121,6 @@ class WaypointUpdater(object):
 
         # return next n waypoints as a Lane pbject
         wp_end = (wp_start + LOOKAHEAD_WPS) % self.num_waypoints
-        if wp_end > wp_start:
-            waypoints = self.base_waypoints[wp_start:wp_end]
-        else:
-            waypoints = self.base_waypoints[wp_start:] + self.base_waypoints[0:wp_end]
 
         if self.fsm_state == FSM_GO:
             # Do we have a traffic light in the vicinity ?
@@ -104,13 +133,13 @@ class WaypointUpdater(object):
                     self.fsm_state = FSM_STOPPING
                     # simulates a 10 - second stop
                     rospy.Timer(rospy.Duration.from_sec(10), self.traffic_lights_off, oneshot=True)
-                    self.decelarate(waypoints,  wp_start, self.traffic_light)
+                    waypoinst = self.decelarate(wp_start, self.traffic_light)
                 else:
                     # continue FSM_GO
-                    self.accelarate(waypoints, wp_start, wp_end)
+                    waypoinst = self.accelarate(wp_start, wp_end)
             else:
                 # continue FSM_GO
-                self.accelarate(waypoints, wp_start, wp_end)
+                waypoinst = self.accelarate(wp_start, wp_end)
 
 
         else: # self.fsm_state == FSM_STOPPING
@@ -118,11 +147,11 @@ class WaypointUpdater(object):
             # wait for light to go off
             if self.traffic_light != None:
                 # continue decelarating
-                self.decelarate(waypoints, wp_start, self.traffic_light)
+                waypoinst = self.decelarate(wp_start, self.traffic_light)
             else:
                 # back to FSM_GO
                 self.fsm_state = FSM_GO
-                self.accelarate(waypoints, wp_start, wp_end)
+                waypoinst = self.accelarate(wp_start, wp_end)
         
         lane = Lane()
         lane.header.frame_id = '/world'
@@ -131,35 +160,30 @@ class WaypointUpdater(object):
         self.final_waypoints_pub.publish(lane)
         return
 
-    def accelarate(self, waypoints, wp_start, wp_end):
+    def accelarate(self, wp_start, wp_end):
         # accelaration
         a = SPEED_LIMIT/TIME_TO_MAX
         #rospy.loginfo("accelarating: %f", a)
 
-        # get distances corresponding to waypoints
+        # get distances corresponding to waypoints          
         if wp_end > wp_start:
+            waypoints = self.base_waypoints[wp_start:wp_end]
             distances = self.base_waypoint_distances[wp_start:wp_end]
         else:
+            waypoints = self.base_waypoints[wp_start:] + self.base_waypoints[0:wp_end]
             distances = self.base_waypoint_distances[wp_start:] + self.base_waypoint_distances[0:wp_end]
 
         v = self.velocity
-        for wp, s in zip(waypoints, distances):
-            wp.twist.twist.linear.x = v
-            # calculate velocuty at next waypoint
-            if a != 0:
-                t = (math.sqrt(v**2 + 2*a*s) - v) / a
-                v = v + a*t
-            if v > SPEED_LIMIT:
-                v = SPEED_LIMIT
-            if v < 0:
-                v = 0
-        return
+        return interpolate_waypoints(waypoints, distances, a, v)
 
-    def decelarate(self, waypoints, wp_start, wp_end):
-        # get distances corresponding to waypoints
+
+    def decelarate(self, wp_start, wp_end):
+        # get distances corresponding to waypoints          
         if wp_end > wp_start:
+            waypoints = self.base_waypoints[wp_start:wp_end]
             distances = self.base_waypoint_distances[wp_start:wp_end]
         else:
+            waypoints = self.base_waypoints[wp_start:] + self.base_waypoints[0:wp_end]
             distances = self.base_waypoint_distances[wp_start:] + self.base_waypoint_distances[0:wp_end]
 
         u = self.velocity
@@ -167,18 +191,7 @@ class WaypointUpdater(object):
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
-        v = self.velocity
-        for wp, s in zip(waypoints, distances):
-            wp.twist.twist.linear.x = v
-            # calculate velocuty at next waypoint
-            if a != 0:
-                t = -(math.sqrt(abs(v**2 + 2*a*s)) - v) / a
-                v = v + a*t
-            if v > SPEED_LIMIT:
-                v = SPEED_LIMIT
-            if v < 0:
-                v = 0
-        return
+        return interpolate_waypoints(waypoints, distances, a, u)
 
     # update nearest waypoint index by searching nearby values
     # waypoints are sorted, so search can be optimized
