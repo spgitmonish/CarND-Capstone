@@ -26,7 +26,7 @@ TIME_PERIOD_PUBLISHED = 1. #sec
 LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
 SPEED_LIMIT = 20.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
-LIGHT_BREAKING_DISTANCE_METERS = 20 # meters
+LIGHT_BREAKING_DISTANCE_METERS = 80 # meters
 
 FSM_GO = 0
 FSM_STOPPING = 1
