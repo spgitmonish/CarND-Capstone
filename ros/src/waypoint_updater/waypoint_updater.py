@@ -22,11 +22,11 @@ current status in `/vehicle/traffic_lights` message. You can use this message to
 as well as to verify your TL classifier.
 
 '''
-TIME_PERIOD_PUBLISHED = 1. #sec
+TIME_PERIOD_PUBLISHED = 2. #sec
 LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
-SPEED_LIMIT = 20.0 # m/s
+SPEED_LIMIT = 5.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
-LIGHT_BREAKING_DISTANCE_METERS = 80 # meters
+LIGHT_BREAKING_DISTANCE_METERS = 20 # meters
 
 FSM_GO = 0
 FSM_STOPPING = 1
@@ -103,19 +103,12 @@ class WaypointUpdater(object):
         # return next n waypoints as a Lane pbject
         if self.fsm_state == FSM_GO:
             # Do we have a traffic light in the vicinity ?
-            if self.traffic_light != None and abs(self.traffic_light - wp_start) < LOOKAHEAD_WPS:
-
-                # is it close enough to start stopping for ?
-                distance = sum(self.base_waypoint_distances[wp_start : self.traffic_light])
-                if distance < LIGHT_BREAKING_DISTANCE_METERS:
-                    rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
-                    self.fsm_state = FSM_STOPPING
-                    # simulates a 10 - second stop
-                    rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
-                    waypoints = self.decelarate(self.traffic_light)
-                else:
-                    # continue FSM_GO
-                    waypoints = self.accelarate()
+            if self.traffic_light != None and self.distanceToWaypoint(self.traffic_light) < LIGHT_BREAKING_DISTANCE_METERS:
+                rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
+                self.fsm_state = FSM_STOPPING
+                # simulates a 10 - second stop
+                rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
+                waypoints = self.decelarate(self.traffic_light)
             else:
                 # continue FSM_GO
                 waypoints = self.accelarate()
@@ -143,7 +136,7 @@ class WaypointUpdater(object):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
         a = clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        return self.simple_interpolate_waypoints(a)
+        return self.interpolate_waypoints(a)
 
     def decelarate(self, wp_end):
         """
@@ -156,16 +149,12 @@ class WaypointUpdater(object):
             t = 2s/u
             substitute back in eq1. gives a = -u^2/2s
         """
-        if wp_end > self.nearestWaypointIndex:
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp_end]
-        else:
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp_end]
         u = self.velocity
-        s = sum(distances)
+        s = self.distanceToWaypoint(wp_end)
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
-        return self.simple_interpolate_waypoints(a)
+        return self.interpolate_waypoints(a)
 
     def simple_interpolate_waypoints(self, a):
         output = []
@@ -198,6 +187,29 @@ class WaypointUpdater(object):
         qy = []
         qz = []
         t = []
+
+        # Previous waypoint
+        #wp = self.base_waypoints[wp_idx - 1]
+        #t.append(-?)
+        #x.append(wp.pose.pose.position.x)
+        #y.append(wp.pose.pose.position.y)
+        #z.append(wp.pose.pose.position.z)
+        #qw.append(wp.pose.pose.orientation.w)
+        #qx.append(wp.pose.pose.orientation.x)
+        #qy.append(wp.pose.pose.orientation.y)
+        #qz.append(wp.pose.pose.orientation.z)
+
+        # Start interpolating from current pose
+        #t.append(0)
+        #x.append(self.current_pose.pose.position.x)
+        #y.append(self.current_pose.pose.position.y)
+        #z.append(self.current_pose.pose.position.z)
+        #qw.append(self.current_pose.pose.orientation.w)
+        #qx.append(self.current_pose.pose.orientation.x)
+        #qy.append(self.current_pose.pose.orientation.y)
+        #qz.append(self.current_pose.pose.orientation.z)
+
+        # upcoming waypoints
         wp_idx = self.nearestWaypointIndex
         max_s = (self.velocity * TIME_PERIOD_PUBLISHED) + (0.5 * a * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
         s = 0
@@ -216,23 +228,6 @@ class WaypointUpdater(object):
                 t.append( (math.sqrt(self.velocity**2 + 2*a*s) - self.velocity) / a )
             s += self.base_waypoint_distances[wp_idx % self.num_waypoints]
             wp_idx += 1
-        
-        if len(x) < 2: # can't use splines, interpolate to next point
-            wp = self.nearestWaypointIndex
-            theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
-
-            for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
-                r = v*t + 0.5*a*(t**2)
-                x = r * math.cos(theta)
-                y = r * math.sin(theta)
-                p = Waypoint()
-                p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
-                p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
-                p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
-                p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
-                p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
-                output.append(p)
-            return output
 
         #x_spline = interp1d(t, x, kind='cubic')
         #y_spline = interp1d(t, y, kind='cubic')
@@ -305,9 +300,18 @@ class WaypointUpdater(object):
 
             return self.nearestWaypointIndex# keep prev value
 
+    # return distance from current position to specified waypoint
+    def distanceToWaypoint(self, wp):
+        if wp > self.nearestWaypointIndex:
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp]
+        else:
+            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp]
+        return sum(distances)
+
+    # Velocity is passed in as m/s
     def velocity_cb(self, vel):
         self.velocity = vel.twist.linear.x
-        rospy.loginfo("velocity: %f", vel.twist.linear.x)
+        #rospy.loginfo("velocity: %f", vel.twist.linear.x)
 
     # Waypoint callback - data from /waypoint_loader
     # I expect this to be constant, so we cache it and dont handle beyond 1st call
