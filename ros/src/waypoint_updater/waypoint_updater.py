@@ -8,6 +8,7 @@ from styx_msgs.msg import Lane, Waypoint
 import math
 import numpy as np
 from scipy.interpolate import interp1d, splrep, splev
+from eventlet import event
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -28,8 +29,13 @@ SPEED_LIMIT = 20.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 LIGHT_BREAKING_DISTANCE_METERS = 80 # meters
 
-FSM_GO = 0
-FSM_STOPPING = 1
+#FSM_GO = 0
+#FSM_STOPPING = 1
+
+#finite states
+FSM = {'STOP':0,
+        'GO':1,
+        'STOPPING':2}
 
 def clip(val, min, max):
     if val < min:
@@ -76,7 +82,7 @@ class WaypointUpdater(object):
         self.traffic_light = 750
 
         # initial state machine state
-        self.fsm_state = FSM_GO
+        self.fsm_state = FSM['GO']
 
         rospy.spin()
 
@@ -100,44 +106,35 @@ class WaypointUpdater(object):
         self.nearestWaypointIndex = wp_start
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
 
-        # return next n waypoints as a Lane pbject
-        if self.fsm_state == FSM_GO:
-            # Do we have a traffic light in the vicinity ?
-            if self.traffic_light != None and abs(self.traffic_light - wp_start) < LOOKAHEAD_WPS:
-
-                # is it close enough to start stopping for ?
-                distance = sum(self.base_waypoint_distances[wp_start : self.traffic_light])
-                if distance < LIGHT_BREAKING_DISTANCE_METERS:
-                    rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
-                    self.fsm_state = FSM_STOPPING
-                    # simulates a 10 - second stop
-                    rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
-                    waypoints = self.decelarate(self.traffic_light)
-                else:
-                    # continue FSM_GO
-                    waypoints = self.accelarate()
-            else:
-                # continue FSM_GO
-                waypoints = self.accelarate()
-
-
-        else: # self.fsm_state == FSM_STOPPING
-
-            # wait for light to go off
+        if self.fsm_state == FSM['GO']:
+            waypoints = self.accelarate()
             if self.traffic_light != None:
-                # continue decelarating
-                waypoints = self.decelarate(self.traffic_light)
-            else:
-                # back to FSM_GO
-                self.fsm_state = FSM_GO
-                waypoints = self.accelarate()
-        
+                distance = sum(self.base_waypoint_distances[wp_start : self.traffic_light])
+                if distance < LIGHT_BREAKING_DISTANCE_METERS and distance > 5:
+                    self.fsm_state = FSM['STOPPING']
+                    rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
+                
+        elif self.fsm_state == FSM['STOPPING']:        
+            waypoints = self.decelarate(self.traffic_light)
+            if self.nearestWaypointIndex >= self.traffic_light:
+                self.fsm_state = FSM['STOP']
+                rospy.Timer(rospy.Duration.from_sec(10), self.traffic_lights_off, oneshot=True)
+                rospy.loginfo("stopping for traffic light: %d => %d", wp_start, self.traffic_light)
+                
+        elif self.fsm_state == FSM['STOP']:  
+            waypoints = self.decelarate(self.traffic_light)
+            if self.traffic_light == None:
+                self.fsm_state = FSM['GO']
+                rospy.loginfo("going after traffic light")
+            
+        # return next n waypoints as a Lane pbject
         lane = Lane()
         lane.header.frame_id = '/world'
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
         return
+    
 
     def accelarate(self):
         # accelaration

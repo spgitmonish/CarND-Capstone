@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from rospy.timer import sleep
 PKG = 'waypoint_updater'
 import roslib; roslib.load_manifest(PKG) #not needed with catkin
 
@@ -6,7 +7,12 @@ import sys
 import unittest
 from waypoint_updater import WaypointUpdater
 
-class TestWaypointUpdater(unittest.TestCase): 
+import rospy
+import tf
+from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped, Quaternion
+from styx_msgs.msg import Lane, Waypoint
+
+class TestWaypointUpdater(unittest.TestCase):
     def test_run(self):
         self.assertTrue(True, 'Test suite works')
         
@@ -16,7 +22,7 @@ class TestWaypointUpdater(unittest.TestCase):
         
     def test_initialState(self):
         wu = WaypointUpdater()
-        self.assertEqual(wu.fsm_state, 0, 'Init WU be in state FSM_GO(0)') 
+        self.assertEqual(wu.fsm_state, 1, 'Init WU be in state FSM_GO(1)')
 
 if __name__=='__main__':
     import rostest
