@@ -86,7 +86,7 @@ class DBWNode(object):
         self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):
-        rate = rospy.Rate(10) # 50Hz
+        rate = rospy.Rate(50) # 50Hz
         while not rospy.is_shutdown():
             throttle, brake, steer = self.controller.control(**self.control_params)
             if self.controllerEnabled:
@@ -94,8 +94,6 @@ class DBWNode(object):
             rate.sleep()
 
     def publish(self, throttle, brake, steer):
-        
-        
         self.last_throttle = throttle
         tcmd = ThrottleCmd()
         tcmd.enable = True
@@ -111,11 +109,11 @@ class DBWNode(object):
 
         #publishing to the brake will cause issues with the throttle
         #only publish when the brake needs to be applied
-        if(brake>self.brake_deadband and self.last_brake != brake):
+        if(brake > self.brake_deadband):
             self.last_brake = brake
             bcmd = BrakeCmd()
             bcmd.enable = True
-            bcmd.pedal_cmd_type = BrakeCmd.CMD_PERCENT
+            bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE
             bcmd.pedal_cmd = brake
             self.brake_pub.publish(bcmd)
 
