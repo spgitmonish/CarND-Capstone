@@ -4,7 +4,7 @@ from yaw_controller import YawController
 GAS_DENSITY = 2.858
 ONE_MPH = 0.44704
 MAX_SPEED_MPH = 50
-
+BRAKE_TORQUE_MAX = 3412
 
 class Controller(object):
     def __init__(self, *args, **kwargs):
@@ -32,7 +32,7 @@ class Controller(object):
         effort = self.speed_pid.step(target_speed_mps-current_speed_mps, sample_time_s)
         if effort < 0:
             self.throttle = 0
-            self.brake = abs(effort)
+            self.brake = abs(effort) * BRAKE_TORQUE_MAX
         else:
             self.throttle = effort
             self.brake = 0
