@@ -30,6 +30,7 @@ Once you have the proposed throttle, brake, and steer values, publish it on the 
 that we have created in the `__init__` function.
 
 '''
+RUN_FREQUENCY = 10
 
 class DBWNode(object):
     def __init__(self):
@@ -62,7 +63,7 @@ class DBWNode(object):
         rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_command_cb)
         
         self.controller = Controller(max_steer_angle)
-        self.control_params = {'target_speed_mps':10, 'current_speed_mps':0, 'turn_z':1}
+        self.control_params = {'target_speed_mps':10, 'current_speed_mps':0, 'turn_z':1, 'sample_time_s':(1./RUN_FREQUENCY)}
         
         self.last_throttle = 0
         self.last_steering = 0
@@ -86,7 +87,7 @@ class DBWNode(object):
         self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):
-        rate = rospy.Rate(50) # 50Hz
+        rate = rospy.Rate(RUN_FREQUENCY) 
         while not rospy.is_shutdown():
             throttle, brake, steer = self.controller.control(**self.control_params)
             if self.controllerEnabled:
