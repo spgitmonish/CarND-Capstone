@@ -182,7 +182,7 @@ class WaypointUpdater(object):
         wp_idx = self.nearestWaypointIndex
         max_s = (self.velocity * TIME_PERIOD_PUBLISHED) + (0.5 * a * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
         s = 0
-        while s < max_s or len(x) < 2:
+        while s < max_s:
             wp = self.base_waypoints[wp_idx]
             x.append(wp.pose.pose.position.x)
             y.append(wp.pose.pose.position.y)
@@ -198,15 +198,31 @@ class WaypointUpdater(object):
             s += self.base_waypoint_distances[wp_idx % self.num_waypoints]
             wp_idx += 1
         
+        if len(x) < 2: # can't use splines, interpolate to next point
+            wp = self.nearestWaypointIndex
+            theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+
+            for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
+                r = v*t + 0.5*a*(t**2)
+                x = r * math.cos(theta)
+                y = r * math.sin(theta)
+                p = Waypoint()
+                p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
+                p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
+                p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
+                p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+                p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
+                output.append(p)
+            return output
 
         #x_spline = interp1d(t, x, kind='cubic')
         #y_spline = interp1d(t, y, kind='cubic')
-        k = 5
+        k = 5 # qunitic
         if len(x) < 6:
-            k = 3
+            k = 3 # cubic
         if len(x) < 4:
-            k = 1
-        x_spline = splrep(t, x, k = k) # qunitic
+            k = 1 # linear
+        x_spline = splrep(t, x, k = k) 
         y_spline = splrep(t, y, k = k)
         z_spline = splrep(t, z, k = k)
         qw_spline = splrep(t, qw, k = k)
