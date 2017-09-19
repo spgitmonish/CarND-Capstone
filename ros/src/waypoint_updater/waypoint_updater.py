@@ -2,7 +2,7 @@
 
 import rospy
 import tf
-from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped
+from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped, Quaternion
 from styx_msgs.msg import Lane, Waypoint
 
 import math
@@ -142,7 +142,7 @@ class WaypointUpdater(object):
     def accelarate(self):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
-        a = clip(self.velocity - SPEED_LIMIT / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
+        a = clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
         return self.interpolate_waypoints(a)
 
     def decelarate(self, wp_end):
@@ -170,41 +170,59 @@ class WaypointUpdater(object):
     def interpolate_waypoints(self, a):
         output = []
         v = self.velocity
-        wp = self.nearestWaypointIndex
-        if wp_end > self.nearestWaypointIndex:
-            waypoints = self.base_waypoints[self.nearestWaypointIndex:wp_end]
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp_end]
-        else:
-            waypoints = self.base_waypoints[self.nearestWaypointIndex:] + self.base_waypoints[0:wp_end]
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp_end]
 
         x = []
         y = []
+        z = []
+        qw = []
+        qx = []
+        qy = []
+        qz = []
         t = []
-        wp_idx = 0
+        wp_idx = self.nearestWaypointIndex
         max_s = (self.velocity * TIME_PERIOD_PUBLISHED) + (0.5 * a * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
         s = 0
-        while s < max_s:
+        while s < max_s or len(x) < 2:
+            wp = self.base_waypoints[wp_idx]
             x.append(wp.pose.pose.position.x)
             y.append(wp.pose.pose.position.y)
+            z.append(wp.pose.pose.position.z)
+            qw.append(wp.pose.pose.orientation.w)
+            qx.append(wp.pose.pose.orientation.x)
+            qy.append(wp.pose.pose.orientation.y)
+            qz.append(wp.pose.pose.orientation.z)
             if a == 0:
                 t.append( s / self.velocity )
             else:
                 t.append( (math.sqrt(self.velocity**2 + 2*a*s) - self.velocity) / a )
-            s += distances[wp_idx]
+            s += self.base_waypoint_distances[wp_idx % self.num_waypoints]
             wp_idx += 1
+        
 
         #x_spline = interp1d(t, x, kind='cubic')
         #y_spline = interp1d(t, y, kind='cubic')
-        x_spline = splrep(t, x, k = 5) # qunitic
-        y_spline = splrep(t, y, k = 5)
+        k = 5
+        if len(x) < 6:
+            k = 3
+        if len(x) < 4:
+            k = 1
+        x_spline = splrep(t, x, k = k) # qunitic
+        y_spline = splrep(t, y, k = k)
+        z_spline = splrep(t, z, k = k)
+        qw_spline = splrep(t, qw, k = k)
+        qx_spline = splrep(t, qx, k = k)
+        qy_spline = splrep(t, qy, k = k)
+        qz_spline = splrep(t, qz, k = k)
 
         for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
             p = Waypoint()
-            p.pose.pose.position.x = float(splev(x_spline, t))
-            p.pose.pose.position.y = float(splev(y_spline, t))
-            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
-            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+            p.pose.pose.position.x = float(splev(t, x_spline))
+            p.pose.pose.position.y = float(splev(t, y_spline))
+            p.pose.pose.position.z = float(splev(t, z_spline))
+            p.pose.pose.orientation.w = float(splev(t, qw_spline))
+            p.pose.pose.orientation.x = float(splev(t, qx_spline))
+            p.pose.pose.orientation.y = float(splev(t, qy_spline))
+            p.pose.pose.orientation.z = float(splev(t, qz_spline))
             p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
             output.append(p)
         return output
