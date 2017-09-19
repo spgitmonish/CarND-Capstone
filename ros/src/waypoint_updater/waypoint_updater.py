@@ -48,6 +48,51 @@ def theta_slope(w1, w2):
     y2 = w2.pose.pose.position.y
     return math.atan2((y2-y1), (x2-x1))
 
+def distance2d(x1, y1, x2, y2):
+    return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
+
+def JMT(start, end, T):
+    """
+    Calculate the Jerk Minimizing Trajectory that connects the initial state
+    to the final state in time T.
+
+    INPUTS
+
+    start - the vehicles start location given as a length three array corresponding to initial values of [s, s_dot, s_double_dot]
+    end   - the desired end state for vehicle. Like "start" this is a length three array.
+    T     - The duration, in seconds, over which this maneuver should occur.
+
+    OUTPUT: an array of length 6, each value corresponding to a coefficent in the polynomial 
+    s(t) = a_0 + a_1 * t + a_2 * t**2 + a_3 * t**3 + a_4 * t**4 + a_5 * t**5
+
+    EXAMPLE:
+    > JMT( [0, 10, 0], [10, 10, 0], 1)
+    [0.0, 10.0, 0.0, 0.0, 0.0, 0.0]
+    """
+    t2 = T * T
+    t3 = t2 * T
+    t4 = t2 * t2
+    t5 = t3 * t2
+    Tmat = np.array( [[t3, t4, t5], [3*t2, 4*t3, 5*t4], [6*T, 12*t2, 20*t3]] )
+
+    Sf = end[0]
+    Sf_d = end[1]
+    Sf_dd = end[2]
+    Si = start[0]
+    Si_d = start[1]
+    Si_dd = start[2]
+
+    Sfmat = np.array( [[Sf - (Si + Si_d*T + 0.5*Si_dd*T*T)], [Sf_d - (Si_d + Si_dd*T)], [Sf_dd - Si_dd]] )
+    alpha = np.linalg.inv(Tmat).dot(Sfmat)
+    return (Si, Si_d, 0.5*Si_dd, alpha[0], alpha[1], alpha[2])
+
+class WaypointInfo(object):
+    def __init__(self, wp_obj, dist_to_next, frenet_s):
+        self.wp = wp_obj
+        self.width = dist_to_next
+        self.s = frenet_s
+        self.t = 0.
+
 class WaypointUpdater(object):
     def __init__(self):
 
@@ -63,10 +108,9 @@ class WaypointUpdater(object):
 
         self.current_pose = None
         self.velocity = 0
-        self.base_lane = None
-        self.base_waypoints = None
+        self.waypoints = None
         self.num_waypoints = 0
-        self.base_waypoint_distances = None
+        self.nearestWaypointIndex = -1
 
         """
         light 1: closest waypoint: 289; x,y: (1145.720000,1184.640000)
@@ -87,7 +131,7 @@ class WaypointUpdater(object):
     # called when car's pose has changed
     # respond by emitting next set of final waypoints
     def pose_cb(self, msg):
-        if self.base_waypoints == None:
+        if self.waypoints == None:
             return
 
         #rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
@@ -136,7 +180,7 @@ class WaypointUpdater(object):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
         a = clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        return self.interpolate_waypoints(a)
+        return self.simple_interpolate_waypoints(a)
 
     def decelarate(self, wp_end):
         """
@@ -154,109 +198,28 @@ class WaypointUpdater(object):
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
-        return self.interpolate_waypoints(a)
+        return self.simple_interpolate_waypoints(a)
 
     def simple_interpolate_waypoints(self, a):
         output = []
         v = self.velocity
         wp = self.nearestWaypointIndex
-        theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+        theta = theta_slope(self.waypoints[wp % self.num_waypoints].wp, self.waypoints[(wp+1) % self.num_waypoints].wp)
 
         for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
             r = v*t + 0.5*a*(t**2)
             x = r * math.cos(theta)
             y = r * math.sin(theta)
             p = Waypoint()
-            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
-            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
-            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
-            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+            p.pose.pose.position.x = float(self.waypoints[wp % self.num_waypoints].wp.pose.pose.position.x + x)
+            p.pose.pose.position.y = float(self.waypoints[wp % self.num_waypoints].wp.pose.pose.position.y + y)
+            p.pose.pose.position.z = self.waypoints[wp % self.num_waypoints].wp.pose.pose.position.z
+            p.pose.pose.orientation = self.waypoints[wp % self.num_waypoints].wp.pose.pose.orientation
             p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
             output.append(p)
         return output
 
-    def interpolate_waypoints(self, a):
-        output = []
-        v = self.velocity
-
-        x = []
-        y = []
-        z = []
-        qw = []
-        qx = []
-        qy = []
-        qz = []
-        t = []
-
-        # Previous waypoint
-        #wp = self.base_waypoints[wp_idx - 1]
-        #t.append(-?)
-        #x.append(wp.pose.pose.position.x)
-        #y.append(wp.pose.pose.position.y)
-        #z.append(wp.pose.pose.position.z)
-        #qw.append(wp.pose.pose.orientation.w)
-        #qx.append(wp.pose.pose.orientation.x)
-        #qy.append(wp.pose.pose.orientation.y)
-        #qz.append(wp.pose.pose.orientation.z)
-
-        # Start interpolating from current pose
-        #t.append(0)
-        #x.append(self.current_pose.pose.position.x)
-        #y.append(self.current_pose.pose.position.y)
-        #z.append(self.current_pose.pose.position.z)
-        #qw.append(self.current_pose.pose.orientation.w)
-        #qx.append(self.current_pose.pose.orientation.x)
-        #qy.append(self.current_pose.pose.orientation.y)
-        #qz.append(self.current_pose.pose.orientation.z)
-
-        # upcoming waypoints
-        wp_idx = self.nearestWaypointIndex
-        max_s = (self.velocity * TIME_PERIOD_PUBLISHED) + (0.5 * a * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
-        s = 0
-        while s < max_s:
-            wp = self.base_waypoints[wp_idx]
-            x.append(wp.pose.pose.position.x)
-            y.append(wp.pose.pose.position.y)
-            z.append(wp.pose.pose.position.z)
-            qw.append(wp.pose.pose.orientation.w)
-            qx.append(wp.pose.pose.orientation.x)
-            qy.append(wp.pose.pose.orientation.y)
-            qz.append(wp.pose.pose.orientation.z)
-            if a == 0:
-                t.append( s / self.velocity )
-            else:
-                t.append( (math.sqrt(self.velocity**2 + 2*a*s) - self.velocity) / a )
-            s += self.base_waypoint_distances[wp_idx % self.num_waypoints]
-            wp_idx += 1
-
-        #x_spline = interp1d(t, x, kind='cubic')
-        #y_spline = interp1d(t, y, kind='cubic')
-        k = 5 # qunitic
-        if len(x) < 6:
-            k = 3 # cubic
-        if len(x) < 4:
-            k = 1 # linear
-        x_spline = splrep(t, x, k = k) 
-        y_spline = splrep(t, y, k = k)
-        z_spline = splrep(t, z, k = k)
-        qw_spline = splrep(t, qw, k = k)
-        qx_spline = splrep(t, qx, k = k)
-        qy_spline = splrep(t, qy, k = k)
-        qz_spline = splrep(t, qz, k = k)
-
-        for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
-            p = Waypoint()
-            p.pose.pose.position.x = float(splev(t, x_spline))
-            p.pose.pose.position.y = float(splev(t, y_spline))
-            p.pose.pose.position.z = float(splev(t, z_spline))
-            p.pose.pose.orientation.w = float(splev(t, qw_spline))
-            p.pose.pose.orientation.x = float(splev(t, qx_spline))
-            p.pose.pose.orientation.y = float(splev(t, qy_spline))
-            p.pose.pose.orientation.z = float(splev(t, qz_spline))
-            p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
-            output.append(p)
-        return output
-
+ 
     # update nearest waypoint index by searching nearby values
     # waypoints are sorted, so search can be optimized
     def getNearestWaypointIndex(self, pose):  
@@ -266,19 +229,19 @@ class WaypointUpdater(object):
         # previous nearest point not known, do exhaustive search
         # todo: improve with binary search
         if self.nearestWaypointIndex == -1:    
-            r = [(dl(wp.pose.pose.position, pose.pose.position), i) for i,wp in enumerate(self.base_waypoints)]
+            r = [(dl(wp.wp.pose.pose.position, pose.pose.position), i) for i,wp in enumerate(self.waypoints)]
             return min(r, key=lambda x: x[0])[1]
         # previous nearest waypoint known, so scan points immediately after (& before)
         else:
             
-            d = dl(self.base_waypoints[self.nearestWaypointIndex].pose.pose.position, pose.pose.position)
+            d = dl(self.waypoints[self.nearestWaypointIndex].wp.pose.pose.position, pose.pose.position)
             # scan right
             i = self.nearestWaypointIndex
             d1 = d
             found = False
             while True:
                 i = (i + 1) % self.num_waypoints
-                d2 = dl(self.base_waypoints[i].pose.pose.position, pose.pose.position)
+                d2 = dl(self.waypoints[i].wp.pose.pose.position, pose.pose.position)
                 if d2 > d1: break
                 d1 = d2
                 found = True
@@ -291,7 +254,7 @@ class WaypointUpdater(object):
             found = False
             while True:
                 i = (i - 1) % self.num_waypoints
-                d2 = dl(self.base_waypoints[i].pose.pose.position, pose.pose.position)
+                d2 = dl(self.waypoints[i].wp.pose.pose.position, pose.pose.position)
                 if d2 > d1: break
                 d1 = d2
                 found = True
@@ -303,9 +266,9 @@ class WaypointUpdater(object):
     # return distance from current position to specified waypoint
     def distanceToWaypoint(self, wp):
         if wp > self.nearestWaypointIndex:
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:wp]
+            distances = [o.width for o in self.waypoints[self.nearestWaypointIndex:wp]]
         else:
-            distances = self.base_waypoint_distances[self.nearestWaypointIndex:] + self.base_waypoint_distances[0:wp]
+            distances = [o.width for o in self.waypoints[self.nearestWaypointIndex:]] +  [o.width for o in self.waypoints[0:wp]]
         return sum(distances)
 
     # Velocity is passed in as m/s
@@ -316,21 +279,21 @@ class WaypointUpdater(object):
     # Waypoint callback - data from /waypoint_loader
     # I expect this to be constant, so we cache it and dont handle beyond 1st call
     def waypoints_cb(self, base_lane):
-        if self.base_lane == None:
+        if self.waypoints == None:
             rospy.loginfo("waypoints_cb::%d", len(base_lane.waypoints))
-            self.nearestWaypointIndex = -1
-            self.base_lane = base_lane
-            self.base_waypoints = base_lane.waypoints
-            self.num_waypoints = len(self.base_waypoints)
-            self.base_waypoint_distances = []
+            waypoints = []
+            self.num_waypoints = len(base_lane.waypoints)
+
             d = 0.
-            pos1 = self.base_waypoints[0].pose.pose.position
-            for i in range(1, self.num_waypoints + 1):
-                pos2 = self.base_waypoints[i % self.num_waypoints].pose.pose.position
-                gap = cartesian_distance(pos1,pos2)
-                self.base_waypoint_distances.append(gap)
-                pos1 = pos2
+            for i in range(0, self.num_waypoints):
+                gap = cartesian_distance(base_lane.waypoints[i].pose.pose.position, 
+                    base_lane.waypoints[(i+1) % self.num_waypoints].pose.pose.position)
+                d += gap
+                waypoints.append(WaypointInfo(base_lane.waypoints[i], gap, d))
             rospy.loginfo("track length: %f", d)
+            self.waypoints = waypoints
+
+            # unregister from waypoint callback - huge improvement in speed
             self.base_waypoint_sub.unregister()
 
     def traffic_cb(self, msg):
@@ -350,7 +313,7 @@ class WaypointUpdater(object):
         waypoints[waypoint].twist.twist.linear.x = velocity
 
     def get_waypoint_coordinate(self, wp):
-        return (self.base_waypoints[wp].pose.pose.position.x, self.base_waypoints[wp].pose.pose.position.y)
+        return (self.waypoints[wp].wp.pose.pose.position.x, self.waypoints[wp].wp.pose.pose.position.y)
 
     # arguments: wapoints and two waypoint indices
     # returns distance between the two waypoints
@@ -361,6 +324,55 @@ class WaypointUpdater(object):
             dist += dl(waypoints[wp1].pose.pose.position, waypoints[i].pose.pose.position)
             wp1 = i
         return dist
+
+    def getFrenetCoordinate(self, wp_idx):
+        # next waypoint for current position
+        x = self.current_pose.pose.position.x
+        y = self.current_pose.pose.position.y
+        roll,pitch,yaw = tf.transformations.euler_from_quaternion((
+            self.current_pose.pose.orientation.x,
+            self.current_pose.pose.orientation.y,
+            self.current_pose.pose.orientation.z,
+            self.current_pose.pose.orientation.w))
+        map_x,map_y = self.get_waypoint_coordinate(self.nearestWaypointIndex)
+        heading = math.atan2( (map_y-y),(map_x-x) )
+        angle = math.fabs(yaw-heading)
+
+        nextWaypoint = self.nearestWaypointIndex
+        if angle > math.pi/4:
+            nextWaypoint += 1
+
+        prevWaypoint = (nextWaypoint - 1) % self.num_waypoints
+
+        next_x, next_y = self.get_waypoint_coordinate(nextWaypoint)
+        prev_x, prev_y = self.get_waypoint_coordinate(prevWaypoint)
+
+        n_x = next_x - prev_x
+        n_y = next_y - prev_y
+
+        x_x = x - prev_x
+        x_y = y - prev_y
+
+        # find the projection of x onto n
+        proj_norm = (x_x*n_x+x_y*n_y)/(n_x*n_x+n_y*n_y);
+        proj_x = proj_norm*n_x;
+        proj_y = proj_norm*n_y;
+
+        frenet_d = distance2d(proj_x, proj_y, x_x, x_y)
+
+        #see if d value is positive or negative by comparing it to a center point
+        center_x = 1000-prev_x
+        center_y = 2000-prev_y
+        centerToPos = distance2d(center_x, center_y, x_x, x_y)
+        centerToRef = distance2d(center_x, center_y, proj_x, proj_y)
+        if centerToPos <= centerToRef:
+            frenet_d *= -1
+
+        frenet_s = self.waypoint[prevWaypoint].width
+        frenet_s += distance2d(0, 0, proj_x, proj_y)
+        return (frenet_s, frenet_d)
+
+
 
 
 if __name__ == '__main__':
