@@ -143,7 +143,7 @@ class WaypointUpdater(object):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
         a = clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        return self.interpolate_waypoints(a)
+        return self.simple_interpolate_waypoints(a)
 
     def decelarate(self, wp_end):
         """
@@ -165,7 +165,26 @@ class WaypointUpdater(object):
         a = -u**2 / (2*s)
         rospy.loginfo("decelarate: %f", a)
 
-        return self.interpolate_waypoints(a)
+        return self.simple_interpolate_waypoints(a)
+
+    def simple_interpolate_waypoints(self, a):
+        output = []
+        v = self.velocity
+        wp = self.nearestWaypointIndex
+        theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+
+        for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
+            r = v*t + 0.5*a*(t**2)
+            x = r * math.cos(theta)
+            y = r * math.sin(theta)
+            p = Waypoint()
+            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
+            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
+            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
+            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+            p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
+            output.append(p)
+        return output
 
     def interpolate_waypoints(self, a):
         output = []
@@ -288,7 +307,7 @@ class WaypointUpdater(object):
 
     def velocity_cb(self, vel):
         self.velocity = vel.twist.linear.x
-        #rospy.loginfo("velocity: %f", vel.twist.linear.x)
+        rospy.loginfo("velocity: %f", vel.twist.linear.x)
 
     # Waypoint callback - data from /waypoint_loader
     # I expect this to be constant, so we cache it and dont handle beyond 1st call
