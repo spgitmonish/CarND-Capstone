@@ -23,10 +23,10 @@ current status in `/vehicle/traffic_lights` message. You can use this message to
 as well as to verify your TL classifier.
 
 '''
-TIME_PERIOD_PUBLISHED = 1. #sec
-LOOKAHEAD_WPS = 10 # Number of waypoints we will publish. You can change this number
+TIME_PERIOD_PUBLISHED = 2. #sec
+LOOKAHEAD_WPS = 20 # Number of waypoints we will publish. You can change this number
 TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
-SPEED_LIMIT = 5.0 # m/s
+SPEED_LIMIT = 10.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 LIGHT_BREAKING_DISTANCE_METERS = 30 # meters
 
@@ -159,7 +159,7 @@ class WaypointUpdater(object):
                 rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
                 self.fsm_state = FSM_STOPPING
                 # simulates a 30 - second stop
-                rospy.Timer(rospy.Duration.from_sec(30), self.traffic_lights_off, oneshot=True)
+                rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
                 waypoints = self.decelarate(self.traffic_light)
             else:
                 # continue FSM_GO
@@ -201,12 +201,12 @@ class WaypointUpdater(object):
             t = 2s/u
             substitute back in eq1. gives a = -u^2/2s
         """
-        # u = self.velocity
-        # s = self.distanceToWaypoint(wp_end)
-        # a = -u**2 / (2*s)
-        # rospy.loginfo("decelarate: %f", a)
+        u = self.velocity
+        s = self.distanceToWaypoint(wp_end)
+        a = -u**2 / (2*s)
+        rospy.loginfo("decelarate: %f", a)
 
-        return self.jmt_interpolate_waypoints(-SPEED_LIMIT/TIME_TO_MAX)
+        return self.jmt_interpolate_waypoints(min(-SPEED_LIMIT/TIME_TO_MAX, a))
 
 
     def jmt_interpolate_waypoints(self, a):
@@ -233,50 +233,47 @@ class WaypointUpdater(object):
             #t = min(r, key=lambda x: x[0])[1] * TIME_STEP
             self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
 
-            s,d = self.getFrenetCoordinate()
-            #s = np.polyval(self.Scoeffs, time_elapsed)
+            #s,d = self.getFrenetCoordinate()
+            s = np.polyval(self.Scoeffs, time_elapsed)
             su = np.polyval(np.polyder(self.Scoeffs,1), time_elapsed)
             sa = np.polyval(np.polyder(self.Scoeffs,2), time_elapsed)
-            #d = np.polyval(self.Dcoeffs, time_elapsed)
+            d = np.polyval(self.Dcoeffs, time_elapsed)
             du = np.polyval(np.polyder(self.Dcoeffs,1), time_elapsed)
             da = np.polyval(np.polyder(self.Dcoeffs,2), time_elapsed)
 
-            if time_elapsed > 0.5 - TIME_STEP:
-                T.append(0)
-                X.append(self.current_pose.pose.position.x)
-                Y.append(self.current_pose.pose.position.y)
-            else:
-                for t_delta in range(2):
-                    tis = np.polyval(self.Scoeffs, time_elapsed + (t_delta * TIME_STEP))
-                    tid = np.polyval(self.Dcoeffs, time_elapsed + (t_delta * TIME_STEP))
-                    x, y, heading = self.frenet2XY(tis, tid)
-                    T.append(time_elapsed + (t_delta * TIME_STEP))
-                    X.append(x)
-                    Y.append(y)
+            T.append(0)
+            X.append(self.current_pose.pose.position.x)
+            Y.append(self.current_pose.pose.position.y)
 
-        self.logfile.write("s={}, d={}, x={}, y={}\n".format(s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
+        self.logfile.write("a={}, s={}, d={}, x={}, y={}\n".format(a, s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
 
         t = TIME_PERIOD_PUBLISHED
         f_s = s + clip((su * t + 0.5 * a * t * t), 0, 100)
-        f_sv = su + a * t
+        f_sv = clip(su + a * t, 0, SPEED_LIMIT)
         f_sa = 0
 
         f_d = 0
-        f_dv = du / t
+        f_dv = clip(d / (4*t), 0, SPEED_LIMIT)
         f_da = 0
 
         self.Scoeffs = JMT( [s,su,sa], [f_s, f_sv, f_sa], t )
         self.Dcoeffs = JMT( [d,du,da], [f_d, f_dv, f_da], t )
 
-        # self.logfile.write("Scoeffs={}, Dcoeffs={}\n".format(self.Scoeffs, self.Dcoeffs))
+        self.logfile.write("JMT Inputs: s={}, su={}, sa={}, f_s={}, f_sv={}, f_sa={}\n".format(s,su,sa,f_s, f_sv, f_sa))
+        self.logfile.write("JMT Inputs: d={}, du={}, da={}, f_d={}, f_dv={}, f_da={}\n".format(d,du,da,f_d, f_dv, f_da))
 
-        for t in np.arange(TIME_PERIOD_PUBLISHED / 2., TIME_PERIOD_PUBLISHED * 2, TIME_PERIOD_PUBLISHED/4.):
+        # self.logfile.write("Scoeffs={}, Dcoeffs={}\n".format(self.Scoeffs, self.Dcoeffs))
+        for t in np.arange(TIME_PERIOD_PUBLISHED / 4., TIME_PERIOD_PUBLISHED * 2, TIME_PERIOD_PUBLISHED/4.):
             s_t = np.polyval(self.Scoeffs, t)
             d_t = np.polyval(self.Dcoeffs, t)
-            x, y, heading = self.frenet2XY(s_t, d_t)
+            try:
+                x, y, heading = self.frenet2XY(s_t, d_t)
+            except ValueError:
+                self.logfile.write("s:{}, d:{}".format(s, d))
             T.append(t)
             X.append(x)
-            Y.append(y)           
+            Y.append(y)
+
 
         # k = 5 # qunitic
         # if len(T) < 6:
