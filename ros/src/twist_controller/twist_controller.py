@@ -16,7 +16,7 @@ class Controller(object):
         self.max_speed_mps = MAX_SPEED_MPH*ONE_MPH
         self.min_speed_mps = 0
         
-        self.steerp=2.1
+        self.steerp=2.9
         self.steeri=.1
         self.steerd=.8
         self.speed_pid = PID(self.gainp,self.gaini,self.gaind, -1.0 , 1.0)

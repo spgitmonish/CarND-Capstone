@@ -56,7 +56,6 @@ def theta_slope(w1, w2):
 
 class WaypointUpdater(object):
     def __init__(self):
-
         rospy.init_node('waypoint_updater')
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
@@ -96,18 +95,18 @@ class WaypointUpdater(object):
         if self.base_waypoints == None:
             return
 
-        #rospy.loginfo("pose_cb::x:%f,y:%f,z:%f; qx:%f,qy:%f,qz:%f,qw:%f", 
-        #    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-        #    msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w)
         self.current_pose = msg
+        self.update_fsm()
+        self.update_waypoints()
 
+    
+    def update_fsm(self):
         # find nearest waypoint
         wp_start = self.getNearestWaypointIndex(self.current_pose)
         self.nearestWaypointIndex = wp_start
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
 
         if self.fsm_state == FSM['GO']:
-            waypoints = self.accelarate()
             if self.traffic_light != None:
                 distance = sum(self.base_waypoint_distances[wp_start : self.traffic_light])
                 if distance < LIGHT_BREAKING_DISTANCE_METERS and distance > 5:
@@ -115,17 +114,22 @@ class WaypointUpdater(object):
                     rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
                 
         elif self.fsm_state == FSM['STOPPING']:        
-            waypoints = self.decelarate(self.traffic_light)
             if self.nearestWaypointIndex >= self.traffic_light:
                 self.fsm_state = FSM['STOP']
-                rospy.Timer(rospy.Duration.from_sec(10), self.traffic_lights_off, oneshot=True)
+                rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
                 rospy.loginfo("stopping for traffic light: %d => %d", wp_start, self.traffic_light)
                 
         elif self.fsm_state == FSM['STOP']:  
-            waypoints = self.decelarate(self.traffic_light)
             if self.traffic_light == None:
                 self.fsm_state = FSM['GO']
-                rospy.loginfo("going after traffic light")
+                rospy.loginfo("going again")
+    
+    def update_waypoints(self):
+        waypoints = []
+        if self.fsm_state == FSM['GO']:
+            waypoints = accelerate()
+        else:
+            waypoints = decelerate(self.traffic_light)
             
         # return next n waypoints as a Lane pbject
         lane = Lane()
@@ -133,9 +137,7 @@ class WaypointUpdater(object):
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
-        return
     
-
     def accelarate(self):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
