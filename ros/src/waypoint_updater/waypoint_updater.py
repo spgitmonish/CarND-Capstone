@@ -118,7 +118,7 @@ class WaypointUpdater(object):
         self.Scoeffs = None
         self.Dcoeffs = None
         self.output = None
-        self.logfile = open('path.csv', 'wb')
+        # self.logfile = open('path.csv', 'wb')
 
         """
         light 1: closest waypoint: 289; x,y: (1145.720000,1184.640000)
@@ -231,7 +231,7 @@ class WaypointUpdater(object):
             dist_arr = sorted(r, key=lambda x: x[0])
             time_elapsed = dist_arr[0][1] * TIME_STEP
             #t = min(r, key=lambda x: x[0])[1] * TIME_STEP
-            self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
+            # self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
 
             #s,d = self.getFrenetCoordinate()
             s = np.polyval(self.Scoeffs, time_elapsed)
@@ -245,7 +245,7 @@ class WaypointUpdater(object):
             X.append(self.current_pose.pose.position.x)
             Y.append(self.current_pose.pose.position.y)
 
-        self.logfile.write("a={}, s={}, d={}, x={}, y={}\n".format(a, s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
+        #self.logfile.write("a={}, s={}, d={}, x={}, y={}\n".format(a, s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
 
         t = TIME_PERIOD_PUBLISHED
         f_s = s + clip((su * t + 0.5 * a * t * t), 0, 100)
@@ -259,8 +259,8 @@ class WaypointUpdater(object):
         self.Scoeffs = JMT( [s,su,sa], [f_s, f_sv, f_sa], t )
         self.Dcoeffs = JMT( [d,du,da], [f_d, f_dv, f_da], t )
 
-        self.logfile.write("JMT Inputs: s={}, su={}, sa={}, f_s={}, f_sv={}, f_sa={}\n".format(s,su,sa,f_s, f_sv, f_sa))
-        self.logfile.write("JMT Inputs: d={}, du={}, da={}, f_d={}, f_dv={}, f_da={}\n".format(d,du,da,f_d, f_dv, f_da))
+        # self.logfile.write("JMT Inputs: s={}, su={}, sa={}, f_s={}, f_sv={}, f_sa={}\n".format(s,su,sa,f_s, f_sv, f_sa))
+        # self.logfile.write("JMT Inputs: d={}, du={}, da={}, f_d={}, f_dv={}, f_da={}\n".format(d,du,da,f_d, f_dv, f_da))
 
         # self.logfile.write("Scoeffs={}, Dcoeffs={}\n".format(self.Scoeffs, self.Dcoeffs))
         for t in np.arange(TIME_PERIOD_PUBLISHED / 4., TIME_PERIOD_PUBLISHED * 2, TIME_PERIOD_PUBLISHED/4.):
@@ -269,7 +269,7 @@ class WaypointUpdater(object):
             try:
                 x, y, heading = self.frenet2XY(s_t, d_t)
             except ValueError:
-                self.logfile.write("s:{}, d:{}".format(s, d))
+                rospy.loginfo("s:%f, d:%f",s, d)
             T.append(t)
             X.append(x)
             Y.append(y)
@@ -285,9 +285,9 @@ class WaypointUpdater(object):
             X_spline = splrep(T, X, k = 1) 
             Y_spline = splrep(T, Y, k = 1)
         except ValueError:
-            self.logfile.write("Spline on T: {} \n".format(T))
-            self.logfile.write("Spline on X: {} \n".format(X))
-            self.logfile.write("Spline on Y: {} \n".format(Y))
+            # self.logfile.write("Spline on T: {} \n".format(T))
+            # self.logfile.write("Spline on X: {} \n".format(X))
+            # self.logfile.write("Spline on Y: {} \n".format(Y))
 
         self.output = []
         for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
@@ -298,10 +298,10 @@ class WaypointUpdater(object):
             self.output.append(p)
 
         # dump output to csv
-        spamwriter = csv.writer(self.logfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-        for o in self.output:
-            spamwriter.writerow([o.pose.pose.position.x, o.pose.pose.position.y, o.twist.twist.linear.x])
-        spamwriter.writerow(["-----"]*3)
+        # spamwriter = csv.writer(self.logfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        # for o in self.output:
+        #     spamwriter.writerow([o.pose.pose.position.x, o.pose.pose.position.y, o.twist.twist.linear.x])
+        # spamwriter.writerow(["-----"]*3)
 
         return self.output
 
