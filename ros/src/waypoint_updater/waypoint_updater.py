@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import rospy
+import csv
 import tf
 from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped, Quaternion
 from styx_msgs.msg import Lane, Waypoint
@@ -22,11 +23,12 @@ current status in `/vehicle/traffic_lights` message. You can use this message to
 as well as to verify your TL classifier.
 
 '''
-TIME_PERIOD_PUBLISHED = 2. #sec
-LOOKAHEAD_WPS = 50 # Number of waypoints we will publish. You can change this number
+TIME_PERIOD_PUBLISHED = 1. #sec
+LOOKAHEAD_WPS = 10 # Number of waypoints we will publish. You can change this number
+TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
 SPEED_LIMIT = 5.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
-LIGHT_BREAKING_DISTANCE_METERS = 20 # meters
+LIGHT_BREAKING_DISTANCE_METERS = 30 # meters
 
 FSM_GO = 0
 FSM_STOPPING = 1
@@ -82,9 +84,11 @@ def JMT(start, end, T):
     Si_d = start[1]
     Si_dd = start[2]
 
-    Sfmat = np.array( [[Sf - (Si + Si_d*T + 0.5*Si_dd*T*T)], [Sf_d - (Si_d + Si_dd*T)], [Sf_dd - Si_dd]] )
+    Sfmat = np.array( [Sf - (Si + Si_d*T + 0.5*Si_dd*T*T), Sf_d - (Si_d + Si_dd*T), Sf_dd - Si_dd] )
     alpha = np.linalg.inv(Tmat).dot(Sfmat)
-    return (Si, Si_d, 0.5*Si_dd, alpha[0], alpha[1], alpha[2])
+    
+    #return (Si, Si_d, 0.5*Si_dd, alpha[0], alpha[1], alpha[2])
+    return (alpha[2], alpha[1], alpha[0], 0.5*Si_dd, Si_d, Si)
 
 class WaypointInfo(object):
     def __init__(self, wp_obj, dist_to_next, frenet_s):
@@ -111,6 +115,10 @@ class WaypointUpdater(object):
         self.waypoints = None
         self.num_waypoints = 0
         self.nearestWaypointIndex = -1
+        self.Scoeffs = None
+        self.Dcoeffs = None
+        self.output = None
+        self.logfile = open('path.csv', 'wb')
 
         """
         light 1: closest waypoint: 289; x,y: (1145.720000,1184.640000)
@@ -150,8 +158,8 @@ class WaypointUpdater(object):
             if self.traffic_light != None and self.distanceToWaypoint(self.traffic_light) < LIGHT_BREAKING_DISTANCE_METERS:
                 rospy.loginfo("slowing for traffic light: %d => %d", wp_start, self.traffic_light)
                 self.fsm_state = FSM_STOPPING
-                # simulates a 10 - second stop
-                rospy.Timer(rospy.Duration.from_sec(20), self.traffic_lights_off, oneshot=True)
+                # simulates a 30 - second stop
+                rospy.Timer(rospy.Duration.from_sec(30), self.traffic_lights_off, oneshot=True)
                 waypoints = self.decelarate(self.traffic_light)
             else:
                 # continue FSM_GO
@@ -180,7 +188,7 @@ class WaypointUpdater(object):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
         a = clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        return self.simple_interpolate_waypoints(a)
+        return self.jmt_interpolate_waypoints(a)
 
     def decelarate(self, wp_end):
         """
@@ -193,12 +201,113 @@ class WaypointUpdater(object):
             t = 2s/u
             substitute back in eq1. gives a = -u^2/2s
         """
-        u = self.velocity
-        s = self.distanceToWaypoint(wp_end)
-        a = -u**2 / (2*s)
-        rospy.loginfo("decelarate: %f", a)
+        # u = self.velocity
+        # s = self.distanceToWaypoint(wp_end)
+        # a = -u**2 / (2*s)
+        # rospy.loginfo("decelarate: %f", a)
 
-        return self.simple_interpolate_waypoints(a)
+        return self.jmt_interpolate_waypoints(-SPEED_LIMIT/TIME_TO_MAX)
+
+
+    def jmt_interpolate_waypoints(self, a):
+
+        T = []
+        X = []
+        Y = []
+
+        if self.Scoeffs == None or self.Dcoeffs == None:
+            s, d = self.getFrenetCoordinate()
+            su = 0
+            sa = 0
+            du = 0
+            da = 0
+            
+            T.append(0)
+            X.append(self.current_pose.pose.position.x)
+            Y.append(self.current_pose.pose.position.y)
+        else:
+            # where are we in time in relation to previously generated polynomial
+            r = [(distance2d(wp.pose.pose.position.x, wp.pose.pose.position.y, self.current_pose.pose.position.x, self.current_pose.pose.position.y), i) for i,wp in enumerate(self.output)]
+            dist_arr = sorted(r, key=lambda x: x[0])
+            time_elapsed = dist_arr[0][1] * TIME_STEP
+            #t = min(r, key=lambda x: x[0])[1] * TIME_STEP
+            self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
+
+            s,d = self.getFrenetCoordinate()
+            #s = np.polyval(self.Scoeffs, time_elapsed)
+            su = np.polyval(np.polyder(self.Scoeffs,1), time_elapsed)
+            sa = np.polyval(np.polyder(self.Scoeffs,2), time_elapsed)
+            #d = np.polyval(self.Dcoeffs, time_elapsed)
+            du = np.polyval(np.polyder(self.Dcoeffs,1), time_elapsed)
+            da = np.polyval(np.polyder(self.Dcoeffs,2), time_elapsed)
+
+            if time_elapsed > 0.5 - TIME_STEP:
+                T.append(0)
+                X.append(self.current_pose.pose.position.x)
+                Y.append(self.current_pose.pose.position.y)
+            else:
+                for t_delta in range(2):
+                    tis = np.polyval(self.Scoeffs, time_elapsed + (t_delta * TIME_STEP))
+                    tid = np.polyval(self.Dcoeffs, time_elapsed + (t_delta * TIME_STEP))
+                    x, y, heading = self.frenet2XY(tis, tid)
+                    T.append(time_elapsed + (t_delta * TIME_STEP))
+                    X.append(x)
+                    Y.append(y)
+
+        self.logfile.write("s={}, d={}, x={}, y={}\n".format(s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
+
+        t = TIME_PERIOD_PUBLISHED
+        f_s = s + clip((su * t + 0.5 * a * t * t), 0, 100)
+        f_sv = su + a * t
+        f_sa = 0
+
+        f_d = 0
+        f_dv = du / t
+        f_da = 0
+
+        self.Scoeffs = JMT( [s,su,sa], [f_s, f_sv, f_sa], t )
+        self.Dcoeffs = JMT( [d,du,da], [f_d, f_dv, f_da], t )
+
+        # self.logfile.write("Scoeffs={}, Dcoeffs={}\n".format(self.Scoeffs, self.Dcoeffs))
+
+        for t in np.arange(TIME_PERIOD_PUBLISHED / 2., TIME_PERIOD_PUBLISHED * 2, TIME_PERIOD_PUBLISHED/4.):
+            s_t = np.polyval(self.Scoeffs, t)
+            d_t = np.polyval(self.Dcoeffs, t)
+            x, y, heading = self.frenet2XY(s_t, d_t)
+            T.append(t)
+            X.append(x)
+            Y.append(y)           
+
+        # k = 5 # qunitic
+        # if len(T) < 6:
+        #     k = 3 # cubic
+        # if len(T) < 4:
+        #     k = 1 # linear
+
+        try:
+            X_spline = splrep(T, X, k = 1) 
+            Y_spline = splrep(T, Y, k = 1)
+        except ValueError:
+            self.logfile.write("Spline on T: {} \n".format(T))
+            self.logfile.write("Spline on X: {} \n".format(X))
+            self.logfile.write("Spline on Y: {} \n".format(Y))
+
+        self.output = []
+        for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
+            p = Waypoint()
+            p.pose.pose.position.x = round(float(splev(t, X_spline)),1)
+            p.pose.pose.position.y = round(float(splev(t, Y_spline)),1)
+            p.twist.twist.linear.x = float(clip(su + a*t, 0, SPEED_LIMIT))
+            self.output.append(p)
+
+        # dump output to csv
+        spamwriter = csv.writer(self.logfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+        for o in self.output:
+            spamwriter.writerow([o.pose.pose.position.x, o.pose.pose.position.y, o.twist.twist.linear.x])
+        spamwriter.writerow(["-----"]*3)
+
+        return self.output
+
 
     def simple_interpolate_waypoints(self, a):
         output = []
@@ -286,10 +395,13 @@ class WaypointUpdater(object):
 
             d = 0.
             for i in range(0, self.num_waypoints):
-                gap = cartesian_distance(base_lane.waypoints[i].pose.pose.position, 
-                    base_lane.waypoints[(i+1) % self.num_waypoints].pose.pose.position)
-                d += gap
+                wp1_x = base_lane.waypoints[i].pose.pose.position.x
+                wp1_y = base_lane.waypoints[i].pose.pose.position.y
+                wp2_x = base_lane.waypoints[(i+1) % self.num_waypoints].pose.pose.position.x
+                wp2_y = base_lane.waypoints[(i+1) % self.num_waypoints].pose.pose.position.y
+                gap = distance2d(wp1_x, wp1_y, wp2_x, wp2_y)
                 waypoints.append(WaypointInfo(base_lane.waypoints[i], gap, d))
+                d += gap
             rospy.loginfo("track length: %f", d)
             self.waypoints = waypoints
 
@@ -325,7 +437,7 @@ class WaypointUpdater(object):
             wp1 = i
         return dist
 
-    def getFrenetCoordinate(self, wp_idx):
+    def getFrenetCoordinate(self):
         # next waypoint for current position
         x = self.current_pose.pose.position.x
         y = self.current_pose.pose.position.y
@@ -368,11 +480,38 @@ class WaypointUpdater(object):
         if centerToPos <= centerToRef:
             frenet_d *= -1
 
-        frenet_s = self.waypoint[prevWaypoint].width
+        frenet_s = self.waypoints[prevWaypoint].s
         frenet_s += distance2d(0, 0, proj_x, proj_y)
+
+        #rospy.loginfo("x=%f, y=%f => s=%f, d=%f: nearest: %d, map_x:%f, map_y:%f, yaw:%f, heading:%f", 
+        #    self.current_pose.pose.position.x, self.current_pose.pose.position.y, frenet_s, frenet_d, 
+        #    self.nearestWaypointIndex, map_x, map_y, yaw, heading)
+
         return (frenet_s, frenet_d)
 
+    def frenet2XY(self, s,d):
 
+        wp1 = min([(s-o.s, i) for i,o in enumerate(self.waypoints) if s >= o.s], key=lambda x: x[0])[1]
+        wp2 = (wp1+1)%self.num_waypoints
+
+        wp1_x = self.waypoints[wp1].wp.pose.pose.position.x
+        wp2_x = self.waypoints[wp2].wp.pose.pose.position.x
+        wp1_y = self.waypoints[wp1].wp.pose.pose.position.y
+        wp2_y = self.waypoints[wp2].wp.pose.pose.position.y
+
+        heading = math.atan2(wp2_y - wp1_y, wp2_x - wp1_x)
+
+        seg_s = s - self.waypoints[wp1].s
+
+        seg_x = wp1_x+seg_s*math.cos(heading)
+        seg_y = wp1_y+seg_s*math.sin(heading)
+
+        perp_heading = heading - math.pi/2
+
+        x = seg_x + d*math.cos(perp_heading);
+        y = seg_y + d*math.sin(perp_heading);
+
+        return (x, y, heading);
 
 
 if __name__ == '__main__':
