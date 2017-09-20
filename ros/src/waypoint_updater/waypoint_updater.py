@@ -285,6 +285,7 @@ class WaypointUpdater(object):
             X_spline = splrep(T, X, k = 1) 
             Y_spline = splrep(T, Y, k = 1)
         except ValueError:
+            pass
             # self.logfile.write("Spline on T: {} \n".format(T))
             # self.logfile.write("Spline on X: {} \n".format(X))
             # self.logfile.write("Spline on Y: {} \n".format(Y))
