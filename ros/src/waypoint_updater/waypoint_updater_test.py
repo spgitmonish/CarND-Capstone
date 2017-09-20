@@ -12,6 +12,10 @@ import tf
 from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped, Quaternion
 from styx_msgs.msg import Lane, Waypoint
 
+FSM = {'STOP':0,
+        'GO':1,
+        'STOPPING':2}
+
 class TestWaypointUpdater(unittest.TestCase):
     def test_run(self):
         self.assertTrue(True, 'Test suite works')
@@ -22,7 +26,18 @@ class TestWaypointUpdater(unittest.TestCase):
         
     def test_initialState(self):
         wu = WaypointUpdater()
-        self.assertEqual(wu.fsm_state, 1, 'Init WU be in state FSM_GO(1)')
+        self.assertEqual(wu.fsm_state, FSM['GO'], 'Init WU be in state FSM_GO(1)')
+        
+    def test_update_fsm(self):
+        wu = WaypointUpdater()
+        self.assertEqual(wu.fsm_state, FSM['GO'], 'Init WU be in state FSM_GO(1)')
+        wu.fsm_state = wu.update_fsm(FSM['GO'],20)
+        self.assertEqual(wu.fsm_state, FSM['STOPPING'], 'fsm slow when approaching light')
+        wu.fsm_state = wu.update_fsm(FSM['STOPPING'],0)
+        self.assertEqual(wu.fsm_state, FSM['STOP'], 'fsm stopped when at light')
+        wu.fsm_state = wu.update_fsm(FSM['STOP'],100)
+        self.assertEqual(wu.fsm_state, FSM['GO'], 'fsm goes when new traffic light distance')        
+        
 
 if __name__=='__main__':
     import rostest
