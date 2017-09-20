@@ -82,7 +82,8 @@ class DBWNode(object):
         self.control_params['current_speed_mps'] = twistMsg.twist.linear.x
 
     def twist_command_cb(self, twistMsg):
-        self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
+        if twistMsg.twist.linear.x > 0:
+            self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
         self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):

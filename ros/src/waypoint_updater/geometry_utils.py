@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from math import cos, sin
+import math
 
 def clip(val, min, max):
     if val < min:

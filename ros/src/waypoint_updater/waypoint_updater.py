@@ -64,15 +64,11 @@ class WaypointUpdater(object):
 
         """
         self.traffic_light = 750
-
         # initial state machine state
         self.fsm_state = FSM['GO']
 
         rospy.spin()
 
-    def traffic_lights_off(self, timer_event):
-        rospy.loginfo("traffic_light_cleared")
-        self.traffic_light = None
 
     # called when car's pose has changed
     # respond by emitting next set of final waypoints
@@ -85,7 +81,8 @@ class WaypointUpdater(object):
                 # find nearest waypoint
         wp_start = self.getNearestWaypointIndex(self.current_pose)
         self.nearestWaypointIndex = wp_start
-
+        self.traffic_light = self.update_traffic_light(wp_start, self.traffic_light)
+        
         distance = -1 
         if self.traffic_light != None:
             distance = sum(self.base_waypoint_distances[wp_start : self.traffic_light])
@@ -93,7 +90,10 @@ class WaypointUpdater(object):
         
         self.update_waypoints()
 
-    
+    def update_traffic_light(self, nearest_wp, tf_wp):
+        if nearest_wp > tf_wp:
+            return None
+        
     def update_fsm(self, stateFSM, tf_distance):  
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
 
@@ -108,7 +108,7 @@ class WaypointUpdater(object):
                 rospy.loginfo("stopping for traffic light at waypoint: %d", self.traffic_light)
                 
         elif stateFSM == FSM['STOP']:  
-            if self.traffic_light == None or tf_distance > 10:
+            if self.traffic_light == None or tf_distance > 10 or tf_distance < -10:
                 stateFSM = FSM['GO']
                 rospy.loginfo("going again")
         
@@ -117,9 +117,9 @@ class WaypointUpdater(object):
     def update_waypoints(self):
         waypoints = []
         if self.fsm_state == FSM['GO']:
-            waypoints = self.accelerate()
+            waypoints = self.make_target_speed_wp()
         else:
-            waypoints = self.decelerate(self.traffic_light)
+            waypoints = self.make_slow_speed_wp()
             
         # return next n waypoints as a Lane pbject
         lane = Lane()
@@ -127,11 +127,51 @@ class WaypointUpdater(object):
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
+        
+    def make_target_speed_wp(self):
+        wp = self.nearestWaypointIndex
+        theta = geometry_utils.theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+        v = self.velocity
+        a = geometry_utils.clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
+        output = []
+        for t in np.arange(0, LOOKAHEAD_WPS*0.1, 0.1):
+            r = v*t + 0.5*a*(t**2)
+            x = r * math.cos(theta)
+            y = r * math.sin(theta)
+            p = Waypoint()
+            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
+            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
+            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
+            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
+            output.append(p)
+        return output
+    
+    def make_slow_speed_wp(self):
+        wp = self.nearestWaypointIndex
+        theta = geometry_utils.theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+        v = self.velocity
+        a = geometry_utils.clip((0 - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
+        output = []
+        t_inc = .1
+        for t in np.arange(0, LOOKAHEAD_WPS*t_inc, t_inc):
+            r = v*t + 0.5*a*(t**2)
+            x = r * math.cos(theta)
+            y = r * math.sin(theta)
+            p = Waypoint()
+            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
+            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
+            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
+            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
+            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
+            output.append(p)
+        return output
+
     
     def accelerate(self):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
-        a = clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
+        a = geometry_utils.clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
         return self.interpolate_waypoints(a)
 
     def decelerate(self, wp_end):
@@ -189,7 +229,7 @@ class WaypointUpdater(object):
         
         if len(x) < 2: # can't use splines, interpolate to next point
             wp = self.nearestWaypointIndex
-            theta = theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
+            theta = geometry_utils.theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
 
             for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
                 r = v*t + 0.5*a*(t**2)
@@ -200,7 +240,7 @@ class WaypointUpdater(object):
                 p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
                 p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
                 p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
-                p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
+                p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
                 output.append(p)
             return output
 
@@ -228,7 +268,7 @@ class WaypointUpdater(object):
             p.pose.pose.orientation.x = float(splev(t, qx_spline))
             p.pose.pose.orientation.y = float(splev(t, qy_spline))
             p.pose.pose.orientation.z = float(splev(t, qz_spline))
-            p.twist.twist.linear.x = float(clip(v+a*t,0,SPEED_LIMIT))
+            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
             output.append(p)
         return output
 
@@ -293,7 +333,7 @@ class WaypointUpdater(object):
             pos1 = self.base_waypoints[0].pose.pose.position
             for i in range(1, self.num_waypoints + 1):
                 pos2 = self.base_waypoints[i % self.num_waypoints].pose.pose.position
-                gap = cartesian_distance(pos1,pos2)
+                gap = geometry_utils.cartesian_distance(pos1,pos2)
                 self.base_waypoint_distances.append(gap)
                 pos1 = pos2
             rospy.loginfo("track length: %f", d)
