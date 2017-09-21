@@ -29,7 +29,7 @@ as well as to verify your TL classifier.
 TIME_PERIOD_PUBLISHED = 2. #sec
 LOOKAHEAD_WPS = 20 # Number of waypoints we will publish. You can change this number
 TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
-SPEED_LIMIT = 10.0 # m/s
+SPEED_LIMIT = 5.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
 MAX_ACCEL = SPEED_LIMIT / TIME_TO_MAX
 LIGHT_BREAKING_DISTANCE_METERS = 30 # meters
@@ -75,7 +75,7 @@ class WaypointUpdater(object):
         light 2: closest waypoint: 750; x,y: (1556.820000,1158.860000)
 
         """
-        self.traffic_light = 750
+        self.traffic_light = 450
         # initial state machine state
         self.fsm_state = FSM['GO']
 
