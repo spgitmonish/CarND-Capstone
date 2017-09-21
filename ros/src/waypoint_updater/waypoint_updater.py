@@ -11,6 +11,7 @@ from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped, Quaternion
 from styx_msgs.msg import Lane, Waypoint
 
 import geometry_utils
+import csv
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -30,6 +31,7 @@ LOOKAHEAD_WPS = 20 # Number of waypoints we will publish. You can change this nu
 TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
 SPEED_LIMIT = 10.0 # m/s
 TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
+MAX_ACCEL = SPEED_LIMIT / TIME_TO_MAX
 LIGHT_BREAKING_DISTANCE_METERS = 30 # meters
 
 #FSM_GO = 0
@@ -103,6 +105,8 @@ class WaypointUpdater(object):
     def update_traffic_light(self, nearest_wp, tf_wp):
         if nearest_wp > tf_wp:
             return None
+        else:
+            return tf_wp
         
     def update_fsm(self, stateFSM, tf_distance):  
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
@@ -181,8 +185,23 @@ class WaypointUpdater(object):
     def accelerate(self):
         # accelaration
         #rospy.loginfo("accelarating: %f", a)
-        a = geometry_utils.clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        return self.jmt_interpolate_waypoints(a)
+        s,su,sa, d,du,da = self.getCurrentState()
+        max_s = s + (su * TIME_PERIOD_PUBLISHED + 0.5 * MAX_ACCEL * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
+        nextWaypoint = max([i for i,wp in enumerate(self.waypoints) if wp.s < max_s])
+        f_s = self.waypoints[nextWaypoint].s
+        f_d = 0
+        t_waypoint = (math.sqrt(su*su + 2*MAX_ACCEL*(f_s-s)) - su) / MAX_ACCEL
+        t_max_speed = (SPEED_LIMIT - su) / MAX_ACCEL
+        s_at_tmaxspeed = (su * t_max_speed) + (0.5 * MAX_ACCEL * t_max_speed * t_max_speed)
+        if s_at_tmaxspeed < f_s:
+            f_sv = SPEED_LIMIT
+            f_sa = 0
+        else:
+            f_sv = su + MAX_ACCEL * t_waypoint
+            f_sa = MAX_ACCEL
+        f_dv = f_da = 0
+        return self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], [d,du,da], [f_d, f_dv, f_da], t_waypoint, MAX_ACCEL)
+
 
     def decelerate(self, wp_end):
         """
@@ -195,74 +214,84 @@ class WaypointUpdater(object):
             t = 2s/u
             substitute back in eq1. gives a = -u^2/2s
         """
-        u = self.velocity
-        s = self.distanceToWaypoint(wp_end)
-        a = -u**2 / (2*s)
-        rospy.loginfo("decelarate: %f", a)
+        s,su,sa, d,du,da = self.getCurrentState()
+        f_s = self.waypoints[wp_end].s
+        f_sa = -su**2 / (2*abs(f_s-s))
+        rospy.loginfo("decelarate: %f", f_sa)
 
-        return self.jmt_interpolate_waypoints(a)
+        f_d = f_dv = f_da = 0
+        f_sv = 0
 
-
-    def jmt_interpolate_waypoints(self, a):
-
-        T = []
-        X = []
-        Y = []
-
-        if self.Scoeffs == None or self.Dcoeffs == None:
-            s, d = self.getFrenetCoordinate()
-            su = 0
-            sa = 0
-            du = 0
-            da = 0
-            
-            T.append(0)
-            X.append(self.current_pose.pose.position.x)
-            Y.append(self.current_pose.pose.position.y)
+        vsq = su*su + 2*f_sa*(f_s-s)
+        if  vsq < 0:
+            t_waypoint = -su / f_sa
         else:
-            # where are we in time in relation to previously generated polynomial
-            r = [(geometry_utils.distance2d(wp.pose.pose.position.x, wp.pose.pose.position.y, self.current_pose.pose.position.x, self.current_pose.pose.position.y), i) for i,wp in enumerate(self.output)]
-            time_elapsed = min(r, key=lambda x: x[0])[1] * TIME_STEP
+            vsq = (math.sqrt(vsq) - su)
+            if vsq < 0:
+                t_waypoint = -su / f_sa
+            else:
+                t_waypoint = vsq / f_sa
 
-            # self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
+        waypoints = self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], [d,du,da], [f_d, f_dv, f_da], t_waypoint, f_sa)
+        # dump output to csv
+        with open('decelaration.csv', 'a') as logfile:
+            spamwriter = csv.writer(logfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+            for o in waypoints:
+                spamwriter.writerow([o.pose.pose.position.x, o.pose.pose.position.y, o.twist.twist.linear.x])
+            spamwriter.writerow(["-----"]*3)
+        return waypoints
 
-            #s,d = self.getFrenetCoordinate()
-            s = np.polyval(self.Scoeffs, time_elapsed)
-            su = np.polyval(np.polyder(self.Scoeffs,1), time_elapsed)
-            sa = np.polyval(np.polyder(self.Scoeffs,2), time_elapsed)
-            d = np.polyval(self.Dcoeffs, time_elapsed)
-            du = np.polyval(np.polyder(self.Dcoeffs,1), time_elapsed)
-            da = np.polyval(np.polyder(self.Dcoeffs,2), time_elapsed)
+    def getCurrentState(self):
+        s, d = self.getFrenetCoordinate()
+        su = self.velocity
+        sa = 0
+        du = 0
+        da = 0
+        # if self.Scoeffs != None and self.Dcoeffs != None:
+        #     # where are we in time in relation to previously generated polynomial
+        #     r = [(geometry_utils.distance2d(wp.pose.pose.position.x, wp.pose.pose.position.y, self.current_pose.pose.position.x, self.current_pose.pose.position.y), i) for i,wp in enumerate(self.output)]
+        #     if len(r) > 0:
+        #         time_elapsed = min(r, key=lambda x: x[0])[1] * TIME_STEP
 
-            T.append(0)
-            X.append(self.current_pose.pose.position.x)
-            Y.append(self.current_pose.pose.position.y)
+        #         # self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
+        #         #s = np.polyval(self.Scoeffs, time_elapsed)
+        #         su = np.polyval(np.polyder(self.Scoeffs,1), time_elapsed)
+        #         sa = np.polyval(np.polyder(self.Scoeffs,2), time_elapsed)
+        #         #d = np.polyval(self.Dcoeffs, time_elapsed)
+        #         du = np.polyval(np.polyder(self.Dcoeffs,1), time_elapsed)
+        #         da = np.polyval(np.polyder(self.Dcoeffs,2), time_elapsed)
+        return (s,su,sa, d,du,da)
 
+    def jmt_interpolate_waypoints(self, s_start_state, s_end_state, d_start_state, d_end_state, t, a):
+
+        rospy.loginfo("JMT Inputs: t=%f, s=%f, su=%f, sa=%f, f_s=%f, f_sv=%f, f_sa=%f\n", t,
+            s_start_state[0], s_start_state[1], s_start_state[2], s_end_state[0], s_end_state[1], s_end_state[2])
+        # rospy.loginfo("JMT Inputs: d=%f, du=%f, da=%f, f_d=%f, f_dv=%f, f_da=%f\n", 
+        #     d_start_state[0], d_start_state[1], d_start_state[2], d_end_state[0], d_end_state[1], d_end_state[2])
         #self.logfile.write("a={}, s={}, d={}, x={}, y={}\n".format(a, s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
 
-        t = TIME_PERIOD_PUBLISHED
-        f_s = s + geometry_utils.clip((su * t + 0.5 * a * t * t), 0, 100)
-        f_sv = geometry_utils.clip(su + a * t, 0, SPEED_LIMIT)
-        f_sa = 0
 
-        f_d = 0
-        f_dv = geometry_utils.clip(d / (4*t), 0, SPEED_LIMIT)
-        f_da = 0
-
-        self.Scoeffs = geometry_utils.JMT( [s,su,sa], [f_s, f_sv, f_sa], t )
-        self.Dcoeffs = geometry_utils.JMT( [d,du,da], [f_d, f_dv, f_da], t )
+        self.Scoeffs = geometry_utils.JMT( s_start_state, s_end_state, t )
+        self.Dcoeffs = geometry_utils.JMT( d_start_state, d_end_state, t )
 
         # self.logfile.write("JMT Inputs: s={}, su={}, sa={}, f_s={}, f_sv={}, f_sa={}\n".format(s,su,sa,f_s, f_sv, f_sa))
         # self.logfile.write("JMT Inputs: d={}, du={}, da={}, f_d={}, f_dv={}, f_da={}\n".format(d,du,da,f_d, f_dv, f_da))
 
         # self.logfile.write("Scoeffs={}, Dcoeffs={}\n".format(self.Scoeffs, self.Dcoeffs))
+
+        T = []
+        X = []
+        Y = []
+        T.append(0)
+        X.append(self.current_pose.pose.position.x)
+        Y.append(self.current_pose.pose.position.y)
         for t in np.arange(TIME_PERIOD_PUBLISHED / 4., TIME_PERIOD_PUBLISHED * 2, TIME_PERIOD_PUBLISHED/4.):
             s_t = np.polyval(self.Scoeffs, t)
             d_t = np.polyval(self.Dcoeffs, t)
             try:
                 x, y, heading = self.frenet2XY(s_t, d_t)
             except ValueError:
-                rospy.loginfo("s:%f, d:%f",s, d)
+                rospy.logerr("Error mapping: %f, %f", s_t, d_t)
             T.append(t)
             X.append(x)
             Y.append(y)
@@ -273,28 +302,16 @@ class WaypointUpdater(object):
         #     k = 3 # cubic
         # if len(T) < 4:
         #     k = 1 # linear
-        try:
-            X_spline = splrep(T, X, k = 1) 
-            Y_spline = splrep(T, Y, k = 1)
-        except ValueError:
-            pass
-            # self.logfile.write("Spline on T: {} \n".format(T))
-            # self.logfile.write("Spline on X: {} \n".format(X))
-            # self.logfile.write("Spline on Y: {} \n".format(Y))
+        X_spline = splrep(T, X, k = 5) 
+        Y_spline = splrep(T, Y, k = 5)
 
         self.output = []
         for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
             p = Waypoint()
             p.pose.pose.position.x = round(float(splev(t, X_spline)),1)
             p.pose.pose.position.y = round(float(splev(t, Y_spline)),1)
-            p.twist.twist.linear.x = float(geometry_utils.clip(su + a*t, 0, SPEED_LIMIT))
+            p.twist.twist.linear.x = float(geometry_utils.clip(s_start_state[1] + (a*t), 0, SPEED_LIMIT))
             self.output.append(p)
-
-        # dump output to csv
-        # spamwriter = csv.writer(self.logfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-        # for o in self.output:
-        #     spamwriter.writerow([o.pose.pose.position.x, o.pose.pose.position.y, o.twist.twist.linear.x])
-        # spamwriter.writerow(["-----"]*3)
 
         return self.output
 
