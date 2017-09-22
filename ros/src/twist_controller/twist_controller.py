@@ -1,24 +1,27 @@
 from pid import PID
 from yaw_controller import YawController
+import rospy
 
 GAS_DENSITY = 2.858
 ONE_MPH = 0.44704
 MAX_SPEED_MPH = 50
-BRAKE_TORQUE_MAX = 3412
+BRAKE_TORQUE_MAX = 3412.
 
 class Controller(object):
     def __init__(self, *args, **kwargs):
         #accelerator PID
-        self.gainp=.15
-        self.gaini=.006
-        self.gaind=.013
+        # TODO: Tune numbers
+        self.gainp=50
+        self.gaini=0
+        self.gaind=0
         #pid will use m/s, all velocities must be converted from mph to m/s
         self.max_speed_mps = MAX_SPEED_MPH*ONE_MPH
         self.min_speed_mps = 0
         
-        self.steerp=2.9
-        self.steeri=.1
-        self.steerd=.8
+        # TODO: Tune numbers
+        self.steerp=-2
+        self.steeri=0
+        self.steerd=0
         self.speed_pid = PID(self.gainp,self.gaini,self.gaind, -1.0 , 1.0)
         self.steer_pid = PID(self.steerp,self.steeri,self.steerd, -1*args[0], args[0]) 
         
@@ -29,14 +32,21 @@ class Controller(object):
     def control(self, target_speed_mps, current_speed_mps, sample_time_s=.1, *args, **kwargs):
         # TODO: Change the arg, kwarg list to suit your needs
         # Return throttle, brake, steer
-        effort = self.speed_pid.step(target_speed_mps-current_speed_mps, sample_time_s)
-        if effort < 0:
+        cte = target_speed_mps - current_speed_mps
+        throttle = self.speed_pid.compute(cte)
+        self.speed_pid.update(cte)
+        #rospy.loginfo("target_speed_mps: %f, current_speed_mps: %f, cte: %f, throttle: %f", target_speed_mps, current_speed_mps, cte, throttle)
+
+        if throttle > 0:
             self.throttle = 0
-            self.brake = abs(effort) * BRAKE_TORQUE_MAX
+            self.brake = abs(throttle) * 10
         else:
-            self.throttle = effort
+            self.throttle = abs(throttle)
             self.brake = 0
+
         if 'turn_z' in kwargs.keys(): 
-            self.steer = self.steer_pid.step(kwargs['turn_z'], sample_time_s)
+            cte = kwargs['turn_z']
+            self.steer = self.steer_pid.compute(cte)
+            self.steer_pid.update(cte)
                     
         return self.throttle, self.brake, self.steer

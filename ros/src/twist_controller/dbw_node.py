@@ -30,7 +30,7 @@ Once you have the proposed throttle, brake, and steer values, publish it on the 
 that we have created in the `__init__` function.
 
 '''
-RUN_FREQUENCY = 50 #Hz
+RUN_FREQUENCY = 10 #Hz
 
 class DBWNode(object):
     def __init__(self):
@@ -82,27 +82,21 @@ class DBWNode(object):
         self.control_params['current_speed_mps'] = twistMsg.twist.linear.x
 
     def twist_command_cb(self, twistMsg):
-        if twistMsg.twist.linear.x > 0:
-            self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
+        self.control_params['target_speed_mps'] = twistMsg.twist.linear.x
         self.control_params['turn_z'] = twistMsg.twist.angular.z
 
     def loop(self):
         rate = rospy.Rate(RUN_FREQUENCY) 
         while not rospy.is_shutdown():
-            throttle, brake, steer = self.controller.control(**self.control_params)
             if self.controllerEnabled:
+                throttle, brake, steer = self.controller.control(**self.control_params)
                 self.publish(throttle, brake, steer)
             rate.sleep()
 
     def publish(self, throttle, brake, steer):
         self.last_throttle = throttle
-        tcmd = ThrottleCmd()
-        tcmd.enable = True
-        tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
-        tcmd.pedal_cmd = throttle
-        self.throttle_pub.publish(tcmd)
-
         self.last_steering = steer
+
         scmd = SteeringCmd()
         scmd.enable = True
         scmd.steering_wheel_angle_cmd = steer
@@ -110,14 +104,20 @@ class DBWNode(object):
 
         #publishing to the brake will cause issues with the throttle
         #only publish when the brake needs to be applied
-        if(brake > self.brake_deadband):
+        if(brake > 0):
             self.last_brake = brake
             bcmd = BrakeCmd()
             bcmd.enable = True
-            bcmd.pedal_cmd_type = BrakeCmd.CMD_TORQUE
+            bcmd.boo_cmd = True
+            bcmd.pedal_cmd_type = BrakeCmd.CMD_PERCENT
             bcmd.pedal_cmd = brake
             self.brake_pub.publish(bcmd)
-
+        else:
+            tcmd = ThrottleCmd()
+            tcmd.enable = True
+            tcmd.pedal_cmd_type = ThrottleCmd.CMD_PERCENT
+            tcmd.pedal_cmd = throttle
+            self.throttle_pub.publish(tcmd)
 
 if __name__ == '__main__':
     DBWNode()

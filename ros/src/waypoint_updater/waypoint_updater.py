@@ -26,11 +26,11 @@ current status in `/vehicle/traffic_lights` message. You can use this message to
 as well as to verify your TL classifier.
 
 '''
-TIME_PERIOD_PUBLISHED = 2. #sec
-LOOKAHEAD_WPS = 20 # Number of waypoints we will publish. You can change this number
+TIME_PERIOD_PUBLISHED = 4. #sec
+LOOKAHEAD_WPS = 40 # Number of waypoints we will publish. You can change this number
 TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
 SPEED_LIMIT = 5.0 # m/s
-TIME_TO_MAX = 5.0 # 0 to 50 in 20 sec
+TIME_TO_MAX = 10.0 # Seconds to go from 0 to SPEED_LIMIT
 MAX_ACCEL = SPEED_LIMIT / TIME_TO_MAX
 LIGHT_BREAKING_DISTANCE_METERS = 30 # meters
 
@@ -66,9 +66,6 @@ class WaypointUpdater(object):
         self.waypoints = None
         self.num_waypoints = 0
         self.nearestWaypointIndex = -1
-        self.Scoeffs = None
-        self.Dcoeffs = None
-        self.output = None
 
         """
         light 1: closest waypoint: 289; x,y: (1145.720000,1184.640000)
@@ -90,7 +87,7 @@ class WaypointUpdater(object):
 
         self.current_pose = msg
 
-                # find nearest waypoint
+        # find nearest waypoint
         wp_start = self.getNearestWaypointIndex(self.current_pose)
         self.nearestWaypointIndex = wp_start
         self.traffic_light = self.update_traffic_light(wp_start, self.traffic_light)
@@ -141,50 +138,9 @@ class WaypointUpdater(object):
         lane.header.stamp = rospy.Time(0)
         lane.waypoints = waypoints
         self.final_waypoints_pub.publish(lane)
-        
-    def make_target_speed_wp(self):
-        wp = self.nearestWaypointIndex
-        theta = geometry_utils.theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
-        v = self.velocity
-        a = geometry_utils.clip((SPEED_LIMIT - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        output = []
-        for t in np.arange(0, LOOKAHEAD_WPS*0.1, 0.1):
-            r = v*t + 0.5*a*(t**2)
-            x = r * math.cos(theta)
-            y = r * math.sin(theta)
-            p = Waypoint()
-            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
-            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
-            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
-            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
-            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
-            output.append(p)
-        return output
-    
-    def make_slow_speed_wp(self):
-        wp = self.nearestWaypointIndex
-        theta = geometry_utils.theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
-        v = self.velocity
-        a = geometry_utils.clip((0 - self.velocity) / TIME_PERIOD_PUBLISHED, -SPEED_LIMIT/TIME_TO_MAX, SPEED_LIMIT/TIME_TO_MAX)
-        output = []
-        t_inc = .1
-        for t in np.arange(0, LOOKAHEAD_WPS*t_inc, t_inc):
-            r = v*t + 0.5*a*(t**2)
-            x = r * math.cos(theta)
-            y = r * math.sin(theta)
-            p = Waypoint()
-            p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
-            p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
-            p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
-            p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
-            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
-            output.append(p)
-        return output
-
     
     def accelerate(self):
-        # accelaration
-        #rospy.loginfo("accelarating: %f", a)
+        # accelaration with constant, max accelaration
         s,su,sa, d,du,da = self.getCurrentState()
         max_s = s + (su * TIME_PERIOD_PUBLISHED + 0.5 * MAX_ACCEL * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
         nextWaypoint = max([i for i,wp in enumerate(self.waypoints) if wp.s < max_s])
@@ -200,7 +156,8 @@ class WaypointUpdater(object):
             f_sv = su + MAX_ACCEL * t_waypoint
             f_sa = MAX_ACCEL
         f_dv = f_da = 0
-        return self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], [d,du,da], [f_d, f_dv, f_da], t_waypoint, MAX_ACCEL)
+        return self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], 
+            [d,du,da], [f_d, f_dv, f_da], t_waypoint, MAX_ACCEL)
 
 
     def decelerate(self, wp_end):
@@ -217,28 +174,18 @@ class WaypointUpdater(object):
         s,su,sa, d,du,da = self.getCurrentState()
         f_s = self.waypoints[wp_end].s
         f_sa = -su**2 / (2*abs(f_s-s))
-        rospy.loginfo("decelarate: %f", f_sa)
 
         f_d = f_dv = f_da = 0
         f_sv = 0
 
-        vsq = su*su + 2*f_sa*(f_s-s)
-        if  vsq < 0:
-            t_waypoint = -su / f_sa
-        else:
-            vsq = (math.sqrt(vsq) - su)
-            if vsq < 0:
-                t_waypoint = -su / f_sa
-            else:
-                t_waypoint = vsq / f_sa
+        # time when we'll reach the waypoint
+        t_waypoint = abs( (su-f_sv) / f_sa )
 
-        waypoints = self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], [d,du,da], [f_d, f_dv, f_da], t_waypoint, f_sa)
-        # dump output to csv
-        with open('decelaration.csv', 'a') as logfile:
-            spamwriter = csv.writer(logfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-            for o in waypoints:
-                spamwriter.writerow([o.pose.pose.position.x, o.pose.pose.position.y, o.twist.twist.linear.x])
-            spamwriter.writerow(["-----"]*3)
+        if f_s - s < 1:
+            waypoints = self.stopped_waypoints()
+        else:
+            waypoints = self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], [d,du,da], [f_d, f_dv, f_da], t_waypoint, f_sa)
+
         return waypoints
 
     def getCurrentState(self):
@@ -247,169 +194,69 @@ class WaypointUpdater(object):
         sa = 0
         du = 0
         da = 0
-        # if self.Scoeffs != None and self.Dcoeffs != None:
-        #     # where are we in time in relation to previously generated polynomial
-        #     r = [(geometry_utils.distance2d(wp.pose.pose.position.x, wp.pose.pose.position.y, self.current_pose.pose.position.x, self.current_pose.pose.position.y), i) for i,wp in enumerate(self.output)]
-        #     if len(r) > 0:
-        #         time_elapsed = min(r, key=lambda x: x[0])[1] * TIME_STEP
-
-        #         # self.logfile.write("Time elapsed: {}, {}\n".format(time_elapsed, dist_arr[0][1]))
-        #         #s = np.polyval(self.Scoeffs, time_elapsed)
-        #         su = np.polyval(np.polyder(self.Scoeffs,1), time_elapsed)
-        #         sa = np.polyval(np.polyder(self.Scoeffs,2), time_elapsed)
-        #         #d = np.polyval(self.Dcoeffs, time_elapsed)
-        #         du = np.polyval(np.polyder(self.Dcoeffs,1), time_elapsed)
-        #         da = np.polyval(np.polyder(self.Dcoeffs,2), time_elapsed)
         return (s,su,sa, d,du,da)
 
     def jmt_interpolate_waypoints(self, s_start_state, s_end_state, d_start_state, d_end_state, t, a):
 
-        rospy.loginfo("JMT Inputs: t=%f, s=%f, su=%f, sa=%f, f_s=%f, f_sv=%f, f_sa=%f\n", t,
-            s_start_state[0], s_start_state[1], s_start_state[2], s_end_state[0], s_end_state[1], s_end_state[2])
-        # rospy.loginfo("JMT Inputs: d=%f, du=%f, da=%f, f_d=%f, f_dv=%f, f_da=%f\n", 
-        #     d_start_state[0], d_start_state[1], d_start_state[2], d_end_state[0], d_end_state[1], d_end_state[2])
-        #self.logfile.write("a={}, s={}, d={}, x={}, y={}\n".format(a, s, d, self.current_pose.pose.position.x, self.current_pose.pose.position.y))
+        # Create JMT coefficients: fits qunitic polynomial to start and end points
+        Scoeffs = geometry_utils.JMT( s_start_state, s_end_state, t )
+        Dcoeffs = geometry_utils.JMT( d_start_state, d_end_state, t )
 
-
-        self.Scoeffs = geometry_utils.JMT( s_start_state, s_end_state, t )
-        self.Dcoeffs = geometry_utils.JMT( d_start_state, d_end_state, t )
-
-        # self.logfile.write("JMT Inputs: s={}, su={}, sa={}, f_s={}, f_sv={}, f_sa={}\n".format(s,su,sa,f_s, f_sv, f_sa))
-        # self.logfile.write("JMT Inputs: d={}, du={}, da={}, f_d={}, f_dv={}, f_da={}\n".format(d,du,da,f_d, f_dv, f_da))
-
-        # self.logfile.write("Scoeffs={}, Dcoeffs={}\n".format(self.Scoeffs, self.Dcoeffs))
-
+        # Select current position for continuity
         T = []
         X = []
         Y = []
         T.append(0)
         X.append(self.current_pose.pose.position.x)
         Y.append(self.current_pose.pose.position.y)
-        for t in np.arange(TIME_PERIOD_PUBLISHED / 4., TIME_PERIOD_PUBLISHED * 2, TIME_PERIOD_PUBLISHED/4.):
-            s_t = np.polyval(self.Scoeffs, t)
-            d_t = np.polyval(self.Dcoeffs, t)
+
+        # Select some points from the JMT polynomial
+        for t in np.arange(TIME_PERIOD_PUBLISHED / 4., TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED/4.):
+            s_t = np.polyval(Scoeffs, t)
+            d_t = np.polyval(Dcoeffs, t)
             try:
                 x, y, heading = self.frenet2XY(s_t, d_t)
             except ValueError:
+                # This happens when s becomes -ve : especially for steep accelaration
                 rospy.logerr("Error mapping: %f, %f", s_t, d_t)
+                rospy.logerr("JMT Inputs: t=%f, s=%f, su=%f, sa=%f, f_s=%f, f_sv=%f, f_sa=%f\n", t, s_start_state[0], s_start_state[1], s_start_state[2], s_end_state[0], s_end_state[1], s_end_state[2])
             T.append(t)
             X.append(x)
             Y.append(y)
 
 
+        # Create spline for the trajectory
+        # TODO: try higher order splines for smoother trajectory
         # k = 5 # qunitic
         # if len(T) < 6:
         #     k = 3 # cubic
         # if len(T) < 4:
         #     k = 1 # linear
-        X_spline = splrep(T, X, k = 5) 
-        Y_spline = splrep(T, Y, k = 5)
+        X_spline = splrep(T, X, k = 1) 
+        Y_spline = splrep(T, Y, k = 1)
 
-        self.output = []
-        for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
+        output = []
+        for t in np.arange(TIME_STEP, TIME_PERIOD_PUBLISHED, TIME_STEP ):
             p = Waypoint()
             p.pose.pose.position.x = round(float(splev(t, X_spline)),1)
             p.pose.pose.position.y = round(float(splev(t, Y_spline)),1)
             p.twist.twist.linear.x = float(geometry_utils.clip(s_start_state[1] + (a*t), 0, SPEED_LIMIT))
+
+            output.append(p)
+
+        return output
+
+    def stopped_waypoints(self):
+        # waypoints for when the car is to stop -repeat same position with v=0
+        self.output = []
+        for t in np.arange(TIME_STEP, TIME_PERIOD_PUBLISHED, TIME_STEP ):
+            p = Waypoint()
+            p.pose.pose.position.x = float(self.current_pose.pose.position.x)
+            p.pose.pose.position.y = float(self.current_pose.pose.position.y)
+            p.twist.twist.linear.x = float(0)
             self.output.append(p)
 
         return self.output
-
-
-    def simple_interpolate_waypoints(self, a):
-        output = []
-        v = self.velocity
-        wp = self.nearestWaypointIndex
-        theta = theta_slope(self.waypoints[wp % self.num_waypoints].wp, self.waypoints[(wp+1) % self.num_waypoints].wp)
-
-        for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
-            r = v*t + 0.5*a*(t**2)
-            x = r * math.cos(theta)
-            y = r * math.sin(theta)
-            p = Waypoint()
-            p.pose.pose.position.x = float(self.waypoints[wp % self.num_waypoints].wp.pose.pose.position.x + x)
-            p.pose.pose.position.y = float(self.waypoints[wp % self.num_waypoints].wp.pose.pose.position.y + y)
-            p.pose.pose.position.z = self.waypoints[wp % self.num_waypoints].wp.pose.pose.position.z
-            p.pose.pose.orientation = self.waypoints[wp % self.num_waypoints].wp.pose.pose.orientation
-            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
-            output.append(p)
-        return output
-
-    def spline_interpolate_waypoints(self, a):
-        output = []
-        v = self.velocity
-
-        x = []
-        y = []
-        z = []
-        qw = []
-        qx = []
-        qy = []
-        qz = []
-        t = []
-        wp_idx = self.nearestWaypointIndex
-        max_s = (self.velocity * TIME_PERIOD_PUBLISHED) + (0.5 * a * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
-        s = 0
-        while s < max_s:
-            wp = self.base_waypoints[wp_idx]
-            x.append(wp.pose.pose.position.x)
-            y.append(wp.pose.pose.position.y)
-            z.append(wp.pose.pose.position.z)
-            qw.append(wp.pose.pose.orientation.w)
-            qx.append(wp.pose.pose.orientation.x)
-            qy.append(wp.pose.pose.orientation.y)
-            qz.append(wp.pose.pose.orientation.z)
-            if a == 0:
-                t.append( s / self.velocity )
-            else:
-                t.append( (math.sqrt(self.velocity**2 + 2*a*s) - self.velocity) / a )
-            s += self.base_waypoint_distances[wp_idx % self.num_waypoints]
-            wp_idx += 1
-        
-        if len(x) < 2: # can't use splines, interpolate to next point
-            wp = self.nearestWaypointIndex
-            theta = geometry_utils.theta_slope(self.base_waypoints[wp % self.num_waypoints], self.base_waypoints[(wp+1) % self.num_waypoints])
-
-            for t in np.arange(0, LOOKAHEAD_WPS*0.02, 0.02):
-                r = v*t + 0.5*a*(t**2)
-                x = r * math.cos(theta)
-                y = r * math.sin(theta)
-                p = Waypoint()
-                p.pose.pose.position.x = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.x + x)
-                p.pose.pose.position.y = float(self.base_waypoints[wp % self.num_waypoints].pose.pose.position.y + y)
-                p.pose.pose.position.z = self.base_waypoints[wp % self.num_waypoints].pose.pose.position.z
-                p.pose.pose.orientation = self.base_waypoints[wp % self.num_waypoints].pose.pose.orientation
-                p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
-                output.append(p)
-            return output
-
-        #x_spline = interp1d(t, x, kind='cubic')
-        #y_spline = interp1d(t, y, kind='cubic')
-        k = 5 # qunitic
-        if len(x) < 6:
-            k = 3 # cubic
-        if len(x) < 4:
-            k = 1 # linear
-        x_spline = splrep(t, x, k = k) 
-        y_spline = splrep(t, y, k = k)
-        z_spline = splrep(t, z, k = k)
-        qw_spline = splrep(t, qw, k = k)
-        qx_spline = splrep(t, qx, k = k)
-        qy_spline = splrep(t, qy, k = k)
-        qz_spline = splrep(t, qz, k = k)
-
-        for t in np.arange(0, TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS ):
-            p = Waypoint()
-            p.pose.pose.position.x = float(splev(t, x_spline))
-            p.pose.pose.position.y = float(splev(t, y_spline))
-            p.pose.pose.position.z = float(splev(t, z_spline))
-            p.pose.pose.orientation.w = float(splev(t, qw_spline))
-            p.pose.pose.orientation.x = float(splev(t, qx_spline))
-            p.pose.pose.orientation.y = float(splev(t, qy_spline))
-            p.pose.pose.orientation.z = float(splev(t, qz_spline))
-            p.twist.twist.linear.x = float(geometry_utils.clip(v+a*t,0,SPEED_LIMIT))
-            output.append(p)
-        return output
 
     # update nearest waypoint index by searching nearby values
     # waypoints are sorted, so search can be optimized
@@ -464,7 +311,6 @@ class WaypointUpdater(object):
 
     def velocity_cb(self, vel):
         self.velocity = vel.twist.linear.x
-        #rospy.loginfo("velocity: %f", vel.twist.linear.x)
 
     # Waypoint callback - data from /waypoint_loader
     # I expect this to be constant, so we cache it and dont handle beyond 1st call
