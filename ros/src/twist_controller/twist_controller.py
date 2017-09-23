@@ -30,12 +30,15 @@ class Controller(object):
         # TODO: Change the arg, kwarg list to suit your needs
         # Return throttle, brake, steer
         effort = self.speed_pid.step(target_speed_mps-current_speed_mps, sample_time_s)
-        if effort < 0:
+        if effort <= 0:
             self.throttle = 0
-            self.brake = abs(effort) * BRAKE_TORQUE_MAX
+            self.brake = effort*-100.
         else:
             self.throttle = effort
             self.brake = 0
+        if target_speed_mps <= 0.05:
+            self.throttle = 0
+            self.brake = 100.
         if 'turn_z' in kwargs.keys(): 
             self.steer = self.steer_pid.step(kwargs['turn_z'], sample_time_s)
                     
