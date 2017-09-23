@@ -2,16 +2,12 @@
 
 import math
 import numpy as np
-from scipy.interpolate import interp1d, splrep, splev
 from eventlet import event
 import rospy
 import tf
 
-from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped, Quaternion
-from styx_msgs.msg import Lane, Waypoint
-
-import geometry_utils
-import csv
+from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped
+from styx_msgs.msg import Lane, Waypoint, TrafficLightArray, TrafficLight
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -48,6 +44,9 @@ class WaypointInfo(object):
         self.s = frenet_s
         self.t = 0.
 
+def distance2d(x1, y1, x2, y2):
+    return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
+
 class WaypointUpdater(object):
     def __init__(self):
         rospy.init_node('waypoint_updater')
@@ -58,6 +57,8 @@ class WaypointUpdater(object):
         # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
 
+        self.traffic_debug_sub = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_debug_cb)
+
         # TODO: Add other member variables you need below
 
         self.current_pose = None
@@ -66,11 +67,8 @@ class WaypointUpdater(object):
         self.num_waypoints = 0
         self.nearestWaypointIndex = -1
         self.desired_velocity = 0
-        """
-        light 1: closest waypoint: 289; x,y: (1145.720000,1184.640000)
-        light 2: closest waypoint: 750; x,y: (1556.820000,1158.860000)
-
-        """
+        
+        self.tf_waypoints = None
         self.traffic_light = 750
         # initial state machine state
         self.fsm_state = FSM['GO']
@@ -87,48 +85,53 @@ class WaypointUpdater(object):
         self.current_pose = msg
 
         # find nearest waypoint
-        wp_start = self.getNearestWaypointIndex(self.current_pose)
-        self.nearestWaypointIndex = wp_start
-        self.traffic_light = self.update_traffic_light(wp_start, self.traffic_light)
-        
-        distance = -1 
+        self.nearestWaypointIndex = self.getNearestWaypointIndex(self.current_pose)
+
+        self.debug_traffic_lights()
+
+        self.update_fsm()
+        self.publish_waypoints()
+
+    def debug_traffic_lights(self):
+        if self.tf_waypoints != None:
+            tf_dist, nearest_tf_ahead = min([(self.distanceToWaypoint(tf),tf) for tf in self.tf_waypoints ])
+            if tf_dist < 100:
+                self.traffic_light = nearest_tf_ahead
+
+    def debug_traffic_light_clear(self, evt):
         if self.traffic_light != None:
-            distance = self.distanceToWaypoint(self.traffic_light)
-        self.fsm_state = self.update_fsm(self.fsm_state,distance)
-        
-        self.update_waypoints()
-
-    def update_traffic_light(self, nearest_wp, tf_wp):
-        '''
-        if nearest_wp > tf_wp:
-            return None
-        else:
-            return tf_wp
-        '''
-        #for debugging:
-        return 750
+            rospy.loginfo("clearing traffic light: %d", self.traffic_light)
+            self.tf_waypoints.remove(self.traffic_light)
+            self.traffic_light = None
     
-    def update_fsm(self, stateFSM, tf_distance):  
-        #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
+    def update_fsm(self):  
+        #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))      
 
-        if stateFSM == FSM['GO']:
-            if tf_distance < LIGHT_BREAKING_DISTANCE_METERS and tf_distance > 0:
-                stateFSM = FSM['STOPPING']
-                rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
+        if self.fsm_state == FSM['GO']:
+            if self.traffic_light != None:
+                tf_distance = self.distanceToWaypoint(self.traffic_light)
+                if tf_distance < LIGHT_BREAKING_DISTANCE_METERS and tf_distance > 0:
+                    self.fsm_state = FSM['STOPPING']
+                    rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
+                    
+        elif self.fsm_state == FSM['STOPPING']:
+            if self.traffic_light != None:
+                tf_distance = self.distanceToWaypoint(self.traffic_light)
+                if self.velocity < 0.1:
+                    self.fsm_state = FSM['STOP']
+                    rospy.loginfo("distance: %f, veclocity: %f", tf_distance, self.velocity)
+                    rospy.loginfo("stopping for traffic light at waypoint: %d", self.traffic_light)
+                    rospy.Timer(rospy.Duration(10), self.debug_traffic_light_clear, oneshot = True)
+            else:
+                rospy.loginfo("light turned green - aborting stop, going again")
+                self.fsm_state = FSM["GO"]
                 
-        elif stateFSM == FSM['STOPPING']:        
-            if tf_distance < 5 and tf_distance > -5:
-                stateFSM = FSM['STOP']
-                rospy.loginfo("stopping for traffic light at waypoint: %d", self.traffic_light)
-                
-        elif stateFSM == FSM['STOP']:  
+        elif self.fsm_state == FSM['STOP']:  
             if self.traffic_light == None:
-                stateFSM = FSM['GO']
+                self.fsm_state = FSM['GO']
                 rospy.loginfo("going again")
-        
-        return stateFSM
     
-    def update_waypoints(self):
+    def publish_waypoints(self):
         waypoints = []
         if self.fsm_state == FSM['GO']:
             waypoints = self.make_trajectory(SPEED_LIMIT)
@@ -150,131 +153,19 @@ class WaypointUpdater(object):
         for i in range(LOOKAHEAD_WPS):
             mapPoint = self.waypoints[copyStart+i]
             wp = Waypoint()
-            wp.pose.pose.position.x = mapPoint.wp.pose.pose.position.x
-            wp.pose.pose.position.y = mapPoint.wp.pose.pose.position.y
+            wp.pose.pose = mapPoint.wp.pose.pose
             wp.twist.twist.linear.x = end_speed
             next_wps.append(wp)
         return next_wps
-    
-    
-    '''
-    def accelerate(self):
-        # accelaration with constant, max accelaration
-        s,su,sa, d,du,da = self.getCurrentState()
-        max_s = s + (su * TIME_PERIOD_PUBLISHED + 0.5 * MAX_ACCEL * TIME_PERIOD_PUBLISHED * TIME_PERIOD_PUBLISHED)
-        nextWaypoint = max([i for i,wp in enumerate(self.waypoints) if wp.s < max_s])
-        f_s = self.waypoints[nextWaypoint].s
-        f_d = 0
-        t_waypoint = (math.sqrt(su*su + 2*MAX_ACCEL*(f_s-s)) - su) / MAX_ACCEL
-        t_max_speed = (SPEED_LIMIT - su) / MAX_ACCEL
-        s_at_tmaxspeed = (su * t_max_speed) + (0.5 * MAX_ACCEL * t_max_speed * t_max_speed)
-        if s_at_tmaxspeed < f_s:
-            f_sv = SPEED_LIMIT
-            f_sa = 0
-        else:
-            f_sv = su + MAX_ACCEL * t_waypoint
-            f_sa = MAX_ACCEL
-        f_dv = f_da = 0
-        return self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], 
-            [d,du,da], [f_d, f_dv, f_da], t_waypoint, MAX_ACCEL)
 
-
-    def decelerate(self, wp_end):
-        """
-        solve for -ve accelaration requried to stop car at given waypoint
-            v = u + at
-            subst v = 0, gives
-            eq1. a = -u/t
-            substitute in s=ut+0.5at^2
-            s = ut/2
-            t = 2s/u
-            substitute back in eq1. gives a = -u^2/2s
-        """
-        s,su,sa, d,du,da = self.getCurrentState()
-        f_s = self.waypoints[wp_end].s
-        f_sa = -su**2 / (2*abs(f_s-s))
-
-        f_d = f_dv = f_da = 0
-        f_sv = 0
-
-        # time when we'll reach the waypoint
-        t_waypoint = abs( (su-f_sv) / f_sa )
-
-        if f_s - s < 1:
-            waypoints = self.stopped_waypoints()
-        else:
-            waypoints = self.jmt_interpolate_waypoints([s,su,sa], [f_s, f_sv, f_sa], [d,du,da], [f_d, f_dv, f_da], t_waypoint, f_sa)
-
-        return waypoints
-  
-    def getCurrentState(self):
-        s, d = self.getFrenetCoordinate()
-        su = self.velocity
-        sa = 0
-        du = 0
-        da = 0
-        return (s,su,sa, d,du,da)
-   
-    def jmt_interpolate_waypoints(self, s_start_state, s_end_state, d_start_state, d_end_state, t, a):
-
-        # Create JMT coefficients: fits qunitic polynomial to start and end points
-        Scoeffs = geometry_utils.JMT( s_start_state, s_end_state, t )
-        Dcoeffs = geometry_utils.JMT( d_start_state, d_end_state, t )
-
-        # Select current position for continuity
-        T = []
-        X = []
-        Y = []
-        T.append(0)
-        X.append(self.current_pose.pose.position.x)
-        Y.append(self.current_pose.pose.position.y)
-
-        # Select some points from the JMT polynomial
-        for t in np.arange(TIME_PERIOD_PUBLISHED / 4., TIME_PERIOD_PUBLISHED, TIME_PERIOD_PUBLISHED/4.):
-            s_t = np.polyval(Scoeffs, t)
-            d_t = np.polyval(Dcoeffs, t)
-            try:
-                x, y, heading = self.frenet2XY(s_t, d_t)
-            except ValueError:
-                # This happens when s becomes -ve : especially for steep accelaration
-                rospy.logerr("Error mapping: %f, %f", s_t, d_t)
-                rospy.logerr("JMT Inputs: t=%f, s=%f, su=%f, sa=%f, f_s=%f, f_sv=%f, f_sa=%f\n", t, s_start_state[0], s_start_state[1], s_start_state[2], s_end_state[0], s_end_state[1], s_end_state[2])
-            T.append(t)
-            X.append(x)
-            Y.append(y)
-
-
-        # Create spline for the trajectory
-        # TODO: try higher order splines for smoother trajectory
-        # k = 5 # qunitic
-        # if len(T) < 6:
-        #     k = 3 # cubic
-        # if len(T) < 4:
-        #     k = 1 # linear
-        X_spline = splrep(T, X, k = 1) 
-        Y_spline = splrep(T, Y, k = 1)
-
-        output = []
-        for t in np.arange(TIME_STEP, TIME_PERIOD_PUBLISHED, TIME_STEP ):
-            p = Waypoint()
-            p.pose.pose.position.x = round(float(splev(t, X_spline)),1)
-            p.pose.pose.position.y = round(float(splev(t, Y_spline)),1)
-            p.twist.twist.linear.x = float(geometry_utils.clip(s_start_state[1] + (a*t), 0, SPEED_LIMIT))
-
-            output.append(p)
-
-        return output
-    '''
     def stopped_waypoints(self):
         # waypoints for when the car is to stop -repeat same position with v=0
         self.output = []
         for t in np.arange(TIME_STEP, TIME_PERIOD_PUBLISHED, TIME_STEP ):
             p = Waypoint()
-            p.pose.pose.position.x = float(self.current_pose.pose.position.x)
-            p.pose.pose.position.y = float(self.current_pose.pose.position.y)
-            p.twist.twist.linear.x = float(0)
+            p.pose.pose = self.current_pose.pose
+            p.twist.twist.linear.x = 0.
             self.output.append(p)
-
         return self.output
 
     # update nearest waypoint index by searching nearby values
@@ -345,7 +236,7 @@ class WaypointUpdater(object):
                 wp1_y = base_lane.waypoints[i].pose.pose.position.y
                 wp2_x = base_lane.waypoints[(i+1) % self.num_waypoints].pose.pose.position.x
                 wp2_y = base_lane.waypoints[(i+1) % self.num_waypoints].pose.pose.position.y
-                gap = geometry_utils.distance2d(wp1_x, wp1_y, wp2_x, wp2_y)
+                gap = distance2d(wp1_x, wp1_y, wp2_x, wp2_y)
                 waypoints.append(WaypointInfo(base_lane.waypoints[i], gap, d))
                 d += gap
             rospy.loginfo("track length: %f", d)
@@ -353,6 +244,19 @@ class WaypointUpdater(object):
 
             # unregister from waypoint callback - huge improvement in speed
             self.base_waypoint_sub.unregister()
+
+    def traffic_debug_cb(self, tf_arr):
+        tf_waypoints = []
+        for tf in tf_arr.lights:
+            tfp = tf.pose.pose.position
+            closest_wp = min( ( distance2d(wp.wp.pose.pose.position.x, wp.wp.pose.pose.position.y, tfp.x, tfp.y), i) 
+                for i,wp in enumerate(self.waypoints) )[1]
+            #closest_wp_pos = self.waypoints[closest_wp].wp.pose.pose.position
+            #rospy.loginfo("TF %d @ %f,%f => %d, %f, %f", tf.state, tfp.x, tfp.y, closest_wp, closest_wp_pos.x, closest_wp_pos.y)
+            tf_waypoints.append(closest_wp)
+
+        self.traffic_debug_sub.unregister()
+        self.tf_waypoints = tf_waypoints
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
@@ -382,84 +286,7 @@ class WaypointUpdater(object):
             dist += dl(waypoints[wp1].pose.pose.position, waypoints[i].pose.pose.position)
             wp1 = i
         return dist
-    '''
-    def getFrenetCoordinate(self):
-        # next waypoint for current position
-        x = self.current_pose.pose.position.x
-        y = self.current_pose.pose.position.y
-        roll,pitch,yaw = tf.transformations.euler_from_quaternion((
-            self.current_pose.pose.orientation.x,
-            self.current_pose.pose.orientation.y,
-            self.current_pose.pose.orientation.z,
-            self.current_pose.pose.orientation.w))
-        map_x,map_y = self.get_waypoint_coordinate(self.nearestWaypointIndex)
-        heading = math.atan2( (map_y-y),(map_x-x) )
-        angle = math.fabs(yaw-heading)
 
-        nextWaypoint = self.nearestWaypointIndex
-        if angle > math.pi/4:
-            nextWaypoint += 1
-
-        prevWaypoint = (nextWaypoint - 1) % self.num_waypoints
-
-        next_x, next_y = self.get_waypoint_coordinate(nextWaypoint)
-        prev_x, prev_y = self.get_waypoint_coordinate(prevWaypoint)
-
-        n_x = next_x - prev_x
-        n_y = next_y - prev_y
-
-        x_x = x - prev_x
-        x_y = y - prev_y
-
-        # find the projection of x onto n
-        proj_norm = (x_x*n_x+x_y*n_y)/(n_x*n_x+n_y*n_y);
-        proj_x = proj_norm*n_x;
-        proj_y = proj_norm*n_y;
-
-        frenet_d = geometry_utils.distance2d(proj_x, proj_y, x_x, x_y)
-
-        #see if d value is positive or negative by comparing it to a center point
-        center_x = 1000-prev_x
-        center_y = 2000-prev_y
-        centerToPos = geometry_utils.distance2d(center_x, center_y, x_x, x_y)
-        centerToRef = geometry_utils.distance2d(center_x, center_y, proj_x, proj_y)
-        if centerToPos <= centerToRef:
-            frenet_d *= -1
-
-        frenet_s = self.waypoints[prevWaypoint].s
-        frenet_s += geometry_utils.distance2d(0, 0, proj_x, proj_y)
-
-        #rospy.loginfo("x=%f, y=%f => s=%f, d=%f: nearest: %d, map_x:%f, map_y:%f, yaw:%f, heading:%f", 
-        #    self.current_pose.pose.position.x, self.current_pose.pose.position.y, frenet_s, frenet_d, 
-        #    self.nearestWaypointIndex, map_x, map_y, yaw, heading)
-
-        return (frenet_s, frenet_d)
-
-    def frenet2XY(self, s,d):
-
-        wp1 = min([(s-o.s, i) for i,o in enumerate(self.waypoints) if s >= o.s], key=lambda x: x[0])[1]
-        wp2 = (wp1+1)%self.num_waypoints
-
-        wp1_x = self.waypoints[wp1].wp.pose.pose.position.x
-        wp2_x = self.waypoints[wp2].wp.pose.pose.position.x
-        wp1_y = self.waypoints[wp1].wp.pose.pose.position.y
-        wp2_y = self.waypoints[wp2].wp.pose.pose.position.y
-
-        heading = math.atan2(wp2_y - wp1_y, wp2_x - wp1_x)
-
-        seg_s = s - self.waypoints[wp1].s
-
-        seg_x = wp1_x+seg_s*math.cos(heading)
-        seg_y = wp1_y+seg_s*math.sin(heading)
-
-        perp_heading = heading - math.pi/2
-
-        x = seg_x + d*math.cos(perp_heading);
-        y = seg_y + d*math.sin(perp_heading);
-
-        return (x, y, heading);
-
-    '''
 if __name__ == '__main__':
     try:
         WaypointUpdater()
