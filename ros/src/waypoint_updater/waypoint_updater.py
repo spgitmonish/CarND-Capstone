@@ -9,6 +9,10 @@ import tf
 from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped
 from styx_msgs.msg import Lane, Waypoint, TrafficLightArray, TrafficLight
 
+from sensor_msgs.msg import Image
+
+import cv2
+
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
 
@@ -59,6 +63,8 @@ class WaypointUpdater(object):
 
         self.traffic_debug_sub = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_debug_cb)
 
+        self.image_sub = rospy.Subscriber('/image_color', Image, self.process_image_cb)
+
         # TODO: Add other member variables you need below
 
         self.current_pose = None
@@ -69,11 +75,24 @@ class WaypointUpdater(object):
         self.desired_velocity = 0
         
         self.tf_waypoints = None
-        self.traffic_light = 750
+        self.traffic_light = None
         # initial state machine state
         self.fsm_state = FSM['GO']
 
         rospy.spin()
+
+    def process_image_cb(self, img):
+        #rospy.loginfo("Image: width: %d, height: %d, encoding: %s", img.width, img.height, img.encoding)
+        if self.tf_waypoints == None or self.current_pose == None:
+            return
+
+        tf_dist, nearest_tf_ahead, tf_idx = min([(self.distanceToWaypoint(tf[0]), tf, tf_idx) for tf_idx,tf in enumerate(self.tf_waypoints) ])
+        if tf_dist < 100:
+            fname = "%d_%d_%d.png" % (tf_idx, tf_dist, nearest_tf_ahead[1])
+            img_mat = np.frombuffer(img.data, dtype=np.uint8)
+            img_mat = img_mat.reshape((img.height,img.width,3))
+            img_mat = cv2.cvtColor(img_mat, cv2.COLOR_BGR2RGB)
+            cv2.imwrite(fname, img_mat)
 
 
     # called when car's pose has changed
@@ -87,22 +106,8 @@ class WaypointUpdater(object):
         # find nearest waypoint
         self.nearestWaypointIndex = self.getNearestWaypointIndex(self.current_pose)
 
-        self.debug_traffic_lights()
-
         self.update_fsm()
         self.publish_waypoints()
-
-    def debug_traffic_lights(self):
-        if self.tf_waypoints != None:
-            tf_dist, nearest_tf_ahead = min([(self.distanceToWaypoint(tf),tf) for tf in self.tf_waypoints ])
-            if tf_dist < 100:
-                self.traffic_light = nearest_tf_ahead
-
-    def debug_traffic_light_clear(self, evt):
-        if self.traffic_light != None:
-            rospy.loginfo("clearing traffic light: %d", self.traffic_light)
-            self.tf_waypoints.remove(self.traffic_light)
-            self.traffic_light = None
     
     def update_fsm(self):  
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))      
@@ -121,7 +126,6 @@ class WaypointUpdater(object):
                     self.fsm_state = FSM['STOP']
                     rospy.loginfo("distance: %f, veclocity: %f", tf_distance, self.velocity)
                     rospy.loginfo("stopping for traffic light at waypoint: %d", self.traffic_light)
-                    rospy.Timer(rospy.Duration(10), self.debug_traffic_light_clear, oneshot = True)
             else:
                 rospy.loginfo("light turned green - aborting stop, going again")
                 self.fsm_state = FSM["GO"]
@@ -246,17 +250,21 @@ class WaypointUpdater(object):
             self.base_waypoint_sub.unregister()
 
     def traffic_debug_cb(self, tf_arr):
-        tf_waypoints = []
-        for tf in tf_arr.lights:
-            tfp = tf.pose.pose.position
-            closest_wp = min( ( distance2d(wp.wp.pose.pose.position.x, wp.wp.pose.pose.position.y, tfp.x, tfp.y), i) 
-                for i,wp in enumerate(self.waypoints) )[1]
-            #closest_wp_pos = self.waypoints[closest_wp].wp.pose.pose.position
-            #rospy.loginfo("TF %d @ %f,%f => %d, %f, %f", tf.state, tfp.x, tfp.y, closest_wp, closest_wp_pos.x, closest_wp_pos.y)
-            tf_waypoints.append(closest_wp)
+        if self.tf_waypoints == None:
+            tf_waypoints = []
+            for tf in tf_arr.lights:
+                tfp = tf.pose.pose.position
+                closest_wp = min( ( distance2d(wp.wp.pose.pose.position.x, wp.wp.pose.pose.position.y, tfp.x, tfp.y), i) 
+                    for i,wp in enumerate(self.waypoints) )[1]
+                #closest_wp_pos = self.waypoints[closest_wp].wp.pose.pose.position
+                #rospy.loginfo("TF %d @ %f,%f => %d, %f, %f", tf.state, tfp.x, tfp.y, closest_wp, closest_wp_pos.x, closest_wp_pos.y)
+                tf_waypoints.append([closest_wp, tf.state])
+            self.tf_waypoints = tf_waypoints
+        else:
+            # just update state - assuming same order
+            for tf_idx, tf in enumerate(tf_arr.lights):
+                self.tf_waypoints[tf_idx][1] = tf.state
 
-        self.traffic_debug_sub.unregister()
-        self.tf_waypoints = tf_waypoints
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
