@@ -5,6 +5,8 @@ import numpy as np
 from eventlet import event
 import rospy
 import tf
+import datetime
+import os
 
 from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped
 from styx_msgs.msg import Lane, Waypoint, TrafficLightArray, TrafficLight
@@ -40,6 +42,8 @@ LIGHT_BREAKING_DISTANCE_METERS = 40 # meters
 FSM = {'STOP':0,
         'GO':1,
         'STOPPING':2}
+
+DATASET_DIR = 'dataset/'
 
 class WaypointInfo(object):
     def __init__(self, wp_obj, dist_to_next, frenet_s):
@@ -79,6 +83,8 @@ class WaypointUpdater(object):
         # initial state machine state
         self.fsm_state = FSM['GO']
 
+        os.makedirs(DATASET_DIR)
+
         rospy.spin()
 
     def process_image_cb(self, img):
@@ -88,7 +94,8 @@ class WaypointUpdater(object):
 
         tf_dist, nearest_tf_ahead, tf_idx = min([(self.distanceToWaypoint(tf[0]), tf, tf_idx) for tf_idx,tf in enumerate(self.tf_waypoints) ])
         if tf_dist < 100:
-            fname = "%d_%d_%d.png" % (tf_idx, tf_dist, nearest_tf_ahead[1])
+            now = datetime.datetime.now()
+            fname = os.path.join(DATASET_DIR, "%d_%d_%d_%02d%02d.png" % (tf_idx, tf_dist, nearest_tf_ahead[1], now.hour, now.minute))
             img_mat = np.frombuffer(img.data, dtype=np.uint8)
             img_mat = img_mat.reshape((img.height,img.width,3))
             img_mat = cv2.cvtColor(img_mat, cv2.COLOR_BGR2RGB)
@@ -155,7 +162,7 @@ class WaypointUpdater(object):
         copyStart = self.nearestWaypointIndex
         next_wps = [] 
         for i in range(LOOKAHEAD_WPS):
-            mapPoint = self.waypoints[copyStart+i]
+            mapPoint = self.waypoints[(copyStart+i) % self.num_waypoints]
             wp = Waypoint()
             wp.pose.pose = mapPoint.wp.pose.pose
             wp.twist.twist.linear.x = end_speed
