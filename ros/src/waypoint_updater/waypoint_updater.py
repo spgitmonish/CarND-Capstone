@@ -69,9 +69,14 @@ class WaypointUpdater(object):
         self.desired_velocity = 0
         
         self.tf_waypoints = None
-        self.traffic_light = 750
+        self.traffic_light = None
         # initial state machine state
         self.fsm_state = FSM['GO']
+
+        self.start_stop = 0
+        self.end_stop = 0
+        self.u0 = 0
+        self.t0 = None
 
         rospy.spin()
 
@@ -86,8 +91,6 @@ class WaypointUpdater(object):
 
         # find nearest waypoint
         self.nearestWaypointIndex = self.getNearestWaypointIndex(self.current_pose)
-
-        self.debug_traffic_lights()
 
         self.update_fsm()
         self.publish_waypoints()
@@ -110,9 +113,15 @@ class WaypointUpdater(object):
         if self.fsm_state == FSM['GO']:
             if self.traffic_light != None:
                 tf_distance = self.distanceToWaypoint(self.traffic_light)
-                if tf_distance < LIGHT_BREAKING_DISTANCE_METERS and tf_distance > 0:
+                braking_distance = ((self.velocity**2) / 4.2) + 30
+                if tf_distance < braking_distance and tf_distance > 0:
                     self.fsm_state = FSM['STOPPING']
+                    self.start_stop = self.current_pose.pose.position
+                    self.u0 = self.velocity
+                    self.t0 = rospy.Time.now()
                     rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
+            else:
+                self.debug_traffic_lights()
                     
         elif self.fsm_state == FSM['STOPPING']:
             if self.traffic_light != None:
@@ -121,16 +130,21 @@ class WaypointUpdater(object):
                     self.fsm_state = FSM['STOP']
                     rospy.loginfo("distance: %f, veclocity: %f", tf_distance, self.velocity)
                     rospy.loginfo("stopping for traffic light at waypoint: %d", self.traffic_light)
-                    rospy.Timer(rospy.Duration(10), self.debug_traffic_light_clear, oneshot = True)
+                    rospy.Timer(rospy.Duration(5), self.debug_traffic_light_clear, oneshot = True)
+                    self.end_stop = self.current_pose.pose.position
+                    rospy.loginfo("Distance to stop: %f, u = %f, t = %f", 
+                        distance2d(self.start_stop.x, self.start_stop.y, self.end_stop.x, self.end_stop.y), 
+                        self.u0,
+                        (rospy.Time.now() - self.t0).to_sec())
             else:
                 rospy.loginfo("light turned green - aborting stop, going again")
                 self.fsm_state = FSM["GO"]
-                
-        elif self.fsm_state == FSM['STOP']:  
+
+        elif self.fsm_state == FSM['STOP']:
             if self.traffic_light == None:
                 self.fsm_state = FSM['GO']
                 rospy.loginfo("going again")
-    
+
     def publish_waypoints(self):
         waypoints = []
         if self.fsm_state == FSM['GO']:
