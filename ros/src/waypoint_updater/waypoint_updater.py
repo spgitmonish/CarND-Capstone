@@ -24,13 +24,11 @@ as well as to verify your TL classifier.
 '''
 TIME_PERIOD_PUBLISHED = 4. #sec
 LOOKAHEAD_WPS = 10 # Number of waypoints we will publish. You can change this number
-WP_SPACING_M = 1 # spacing of waypoints in meters
 TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
 SPEED_LIMIT = 10.0 # m/s
-TIME_TO_MAX = 10.0 # Seconds to go from 0 to SPEED_LIMIT
-MAX_ACCEL = SPEED_LIMIT / TIME_TO_MAX
-LIGHT_BREAKING_DISTANCE_METERS = 40 # meters
-
+LIGHT_RED = 0
+LIGHT_ORANGE = 1
+LIGHT_GREEN = 2
 
 #finite states
 FSM = {'STOP':0,
@@ -73,11 +71,6 @@ class WaypointUpdater(object):
         # initial state machine state
         self.fsm_state = FSM['GO']
 
-        self.start_stop = 0
-        self.end_stop = 0
-        self.u0 = 0
-        self.t0 = None
-
         rospy.spin()
 
 
@@ -94,18 +87,6 @@ class WaypointUpdater(object):
 
         self.update_fsm()
         self.publish_waypoints()
-
-    def debug_traffic_lights(self):
-        if self.tf_waypoints != None:
-            tf_dist, nearest_tf_ahead = min([(self.distanceToWaypoint(tf),tf) for tf in self.tf_waypoints ])
-            if tf_dist < 100:
-                self.traffic_light = nearest_tf_ahead
-
-    def debug_traffic_light_clear(self, evt):
-        if self.traffic_light != None:
-            rospy.loginfo("clearing traffic light: %d", self.traffic_light)
-            self.tf_waypoints.remove(self.traffic_light)
-            self.traffic_light = None
     
     def update_fsm(self):  
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))      
@@ -116,12 +97,9 @@ class WaypointUpdater(object):
                 braking_distance = ((self.velocity**2) / 4.2) + 30
                 if tf_distance < braking_distance and tf_distance > 0:
                     self.fsm_state = FSM['STOPPING']
-                    self.start_stop = self.current_pose.pose.position
-                    self.u0 = self.velocity
-                    self.t0 = rospy.Time.now()
                     rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
             else:
-                self.debug_traffic_lights()
+                return # wait for light to turn off
                     
         elif self.fsm_state == FSM['STOPPING']:
             if self.traffic_light != None:
@@ -129,13 +107,6 @@ class WaypointUpdater(object):
                 if self.velocity < 0.1:
                     self.fsm_state = FSM['STOP']
                     rospy.loginfo("distance: %f, veclocity: %f", tf_distance, self.velocity)
-                    rospy.loginfo("stopping for traffic light at waypoint: %d", self.traffic_light)
-                    rospy.Timer(rospy.Duration(5), self.debug_traffic_light_clear, oneshot = True)
-                    self.end_stop = self.current_pose.pose.position
-                    rospy.loginfo("Distance to stop: %f, u = %f, t = %f", 
-                        distance2d(self.start_stop.x, self.start_stop.y, self.end_stop.x, self.end_stop.y), 
-                        self.u0,
-                        (rospy.Time.now() - self.t0).to_sec())
             else:
                 rospy.loginfo("light turned green - aborting stop, going again")
                 self.fsm_state = FSM["GO"]
@@ -260,21 +231,30 @@ class WaypointUpdater(object):
             self.base_waypoint_sub.unregister()
 
     def traffic_debug_cb(self, tf_arr):
-        tf_waypoints = []
-        for tf in tf_arr.lights:
-            tfp = tf.pose.pose.position
-            closest_wp = min( ( distance2d(wp.wp.pose.pose.position.x, wp.wp.pose.pose.position.y, tfp.x, tfp.y), i) 
-                for i,wp in enumerate(self.waypoints) )[1]
-            #closest_wp_pos = self.waypoints[closest_wp].wp.pose.pose.position
-            #rospy.loginfo("TF %d @ %f,%f => %d, %f, %f", tf.state, tfp.x, tfp.y, closest_wp, closest_wp_pos.x, closest_wp_pos.y)
-            tf_waypoints.append(closest_wp)
+        if self.tf_waypoints == None:
+            tf_waypoints = []
+            for tf in tf_arr.lights:
+                tfp = tf.pose.pose.position
+                closest_wp = min( ( distance2d(wp.wp.pose.pose.position.x, wp.wp.pose.pose.position.y, tfp.x, tfp.y), i) 
+                    for i,wp in enumerate(self.waypoints) )[1]
+                #closest_wp_pos = self.waypoints[closest_wp].wp.pose.pose.position
+                #rospy.loginfo("TF %d @ %f,%f => %d, %f, %f", tf.state, tfp.x, tfp.y, closest_wp, closest_wp_pos.x, closest_wp_pos.y)
+                tf_waypoints.append(closest_wp)
+            self.tf_waypoints = tf_waypoints
 
-        self.traffic_debug_sub.unregister()
-        self.tf_waypoints = tf_waypoints
+        # Get TF in front of current position
+        R = [(tf_idx, tf_wp) for tf_idx, tf_wp in enumerate(self.tf_waypoints) if tf_wp > self.nearestWaypointIndex] + [(tf_idx, tf_wp) for tf_idx, tf_wp in enumerate(self.tf_waypoints) if tf_wp <= self.nearestWaypointIndex]
+        if self.distanceToWaypoint(R[0][1]) < 100 and tf_arr.lights[R[0][0]].state != LIGHT_GREEN:
+            self.traffic_cb(R[0][1])
+        else:
+            self.traffic_cb(-1)
 
-    def traffic_cb(self, msg):
-        # TODO: Callback for /traffic_waypoint message. Implement
-        pass
+    def traffic_cb(self, trafficLightwaypointIndex):
+        rospy.loginfo("traffic_cb called with %d", trafficLightwaypointIndex)
+        if trafficLightwaypointIndex == -1:
+            self.traffic_light = None
+        else:
+            self.traffic_light = trafficLightwaypointIndex
 
     def obstacle_cb(self, msg):
         # TODO: Callback for /obstacle_waypoint message. We will implement it later
