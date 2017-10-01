@@ -41,7 +41,7 @@ class TLDetector(object):
         self.upcoming_red_light_pub = rospy.Publisher('/traffic_waypoint', Int32, queue_size=1)
 
         self.bridge = CvBridge()
-        self.light_classifier = TLClassifierSqueeze()
+        self.light_classifier = TLClassifier()
         self.listener = tf.TransformListener()
 
         self.state = TrafficLight.UNKNOWN
@@ -91,7 +91,7 @@ class TLDetector(object):
             self.upcoming_red_light_pub.publish(Int32(self.last_wp))
         self.state_count += 1
 
-        if self.state_count % 300 == 0:
+        if self.state_count % 1 == 0:
             light_wp, state = self.process_traffic_lights()
     def get_closest_waypoint(self, pose):
         """Identifies the closest path waypoint to the given position
@@ -157,7 +157,11 @@ class TLDetector(object):
             self.prev_light_loc = None
             return False
 
-        cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "rgb8")
+        cv_image = None
+        if type(self.light_classifier).__name__ == "TFClassifier":
+            cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "rgb8")
+        elif type(self.light_classifier).__name__ == "TFClassifierSqueeze":
+            cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "rgb8")
 
         #x, y = self.project_to_image_plane(light.pose.pose.position)
 

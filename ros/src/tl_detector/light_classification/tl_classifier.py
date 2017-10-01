@@ -45,11 +45,11 @@ class TLClassifier(object):
 class TLClassifierSqueeze(object):
     def __init__(self):
         '''Hyperparameters'''
-        self.num_classes = 3
+        self.num_classes = 4
         # Learning rate
         self.lr = 1e10
         # Number of epochs
-        self.epochs = 1000
+        self.epochs = 2000
         # Batch Size
         self.batch_size = 16
 
@@ -81,15 +81,18 @@ class TLClassifierSqueeze(object):
         # Run inference on image
         prediction = None
         prediction = inferOnImage(self.sess, self.model_logits, self.X, image)
+        print("Prediction: ", prediction[0])
 
         # Convert number into label just for debug
         prediction_label = None
-        if prediction == 0:
+        if prediction[0] == 0:
             prediction_label = "RED"
-        elif prediction == 1:
+        elif prediction[0] == 1:
             prediction_label = "ORANGE"
-        elif prediction == 2:
+        elif prediction[0] == 2:
             prediction_label = "GREEN"
+        elif prediction[0] == 3:
+            prediction_label = "NOLIGHT"
 
         # Log the message
         rospy.loginfo("The label returned is %s", prediction_label)

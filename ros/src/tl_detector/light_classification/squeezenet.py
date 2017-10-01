@@ -73,11 +73,11 @@ def squeeze_net(input, classes):
     # Input has 3 channels, output has 96 channels
     weights = {'conv1': tf.Variable(tf.truncated_normal([7, 7, 3, 96])),
                'conv10': tf.Variable(tf.truncated_normal([1, 1, 512, classes])),
-               'fc12': tf.Variable(tf.truncated_normal(shape=(1425, 3)))}
+               'fc12': tf.Variable(tf.truncated_normal(shape=(1900, classes)))}
 
     biases = {'conv1': tf.Variable(tf.truncated_normal([96])),
               'conv10': tf.Variable(tf.truncated_normal([classes])),
-              'fc12': tf.Variable(tf.truncated_normal([3]))}
+              'fc12': tf.Variable(tf.truncated_normal([classes]))}
 
     # Layer 1: Convolutional with 96 output channels
     output = tf.nn.conv2d(input, weights['conv1'], strides=[1, 2, 2, 1], padding='SAME', name='conv1')
