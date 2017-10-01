@@ -1,0 +1,2 @@
+model_checkpoint_path: "squeezenet"
+all_model_checkpoint_paths: "squeezenet"
