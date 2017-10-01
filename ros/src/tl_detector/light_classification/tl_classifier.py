@@ -81,7 +81,6 @@ class TLClassifierSqueeze(object):
         # Run inference on image
         prediction = None
         prediction = inferOnImage(self.sess, self.model_logits, self.X, image)
-        print("Prediction: ", prediction[0])
 
         # Convert number into label just for debug
         prediction_label = None
