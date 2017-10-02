@@ -1,7 +1,6 @@
 import random
 import cv2
 import os
-import pandas as pd
 import numpy as np
 import time
 import csv
@@ -11,8 +10,6 @@ import glob
 import rospy
 
 from tensorflow.contrib.layers import flatten
-from sklearn.utils import shuffle
-from sklearn.model_selection import train_test_split
 
 # The fire blocks of the squeezenet model
 def fire_module(input, fire_id, channel, s1, e1, e2):

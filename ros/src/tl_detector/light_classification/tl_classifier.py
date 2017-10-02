@@ -6,13 +6,16 @@ from styx_msgs.msg import TrafficLight
 from squeezenet import *
 from keras.applications.inception_v3 import preprocess_input
 from keras.models import load_model
+from keras.models import model_from_yaml
+from keras.applications.vgg16 import VGG16
+import keras.applications.vgg16
 
 class TLClassifier(object):
     def __init__(self):
         # Load the model
         self.model = load_model(os.getcwd() + "/light_classification/" + "inceptv3beta0.h5")
         # Compile the model
-        self.model.compile(loss="binary_crossentropy", optimizer="rmsprop", metrics=["accuracy"])
+        self.model._make_predict_function()
         self.predictionary = {
             0: "RED",
             1: "ORANGE",
@@ -35,6 +38,8 @@ class TLClassifier(object):
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = np.expand_dims(img, 0)
         g_x = np.argmax(self.model.predict(img)[0])
+        # Kludge alert!
+        g_x = (g_x - 2) % 4
 
         # Log the message
         rospy.loginfo("The label returned is %s", self.predictionary[g_x])
@@ -98,3 +103,31 @@ class TLClassifierSqueeze(object):
 
         # Return Unknown for now
         return TrafficLight.UNKNOWN
+
+class TLClassifierVGG16(object):
+    def __init__(self):
+        # Load the model
+        self.model = load_model(os.getcwd() + "/light_classification/" + "vgg16.h5")
+
+        self.model._make_predict_function()
+
+    def get_classification(self, image):
+        """Determines the color of the traffic light in the image
+        Args:
+            image (cv::Mat): image containing the traffic light
+
+        Returns:
+            int: ID of traffic light color (specified in styx_msgs/TrafficLight)
+
+        """
+        img = cv2.resize(image, None, fx=0.5, fy=0.5)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
+        img = keras.applications.vgg16.preprocess_input(img)
+        pred = self.model.predict(np.array([img]), batch_size=1, verbose=1)
+        g_x = np.argmax(pred[0])
+
+        # Log the message
+        rospy.loginfo("The label returned is %d", (g_x - 2) % 4)
+
+        # Return Unknown for now
+        return g_x
