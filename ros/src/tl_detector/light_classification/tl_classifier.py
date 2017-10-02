@@ -50,7 +50,7 @@ class TLClassifier(object):
 class TLClassifierSqueeze(object):
     def __init__(self):
         '''Hyperparameters'''
-        self.num_classes = 4
+        self.num_classes = 3
         # Learning rate
         self.lr = 1e10
         # Number of epochs
@@ -92,10 +92,8 @@ class TLClassifierSqueeze(object):
         if prediction[0] == 0:
             prediction_label = "RED"
         elif prediction[0] == 1:
-            prediction_label = "ORANGE"
-        elif prediction[0] == 2:
             prediction_label = "GREEN"
-        elif prediction[0] == 3:
+        elif prediction[0] == 2:
             prediction_label = "NOLIGHT"
 
         # Log the message

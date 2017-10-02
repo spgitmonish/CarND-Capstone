@@ -43,7 +43,7 @@ class TLDetector(object):
         simulator. When testing on the vehicle, the color state will not be available. You'll need to
         rely on the position of the light and the camera image to predict it.
         '''
-        sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
+        self.sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
         sub6 = rospy.Subscriber('/image_color', Image, self.image_cb)
 
         config_string = rospy.get_param("/traffic_light_config")
@@ -92,8 +92,12 @@ class TLDetector(object):
             self.sub2.unregister()
 
     def traffic_cb(self, msg):
-        self.lights = msg.lights
+        if self.lights == []:
+            # Cache the lights information and unsubscribe from topic
+            self.lights = msg.lights
 
+            # Performance improvement(as lights position doesn't change)
+            self.sub3.unregister()
     def image_cb(self, msg):
         """Identifies red lights in the incoming camera image and publishes the index
             of the waypoint closest to the red light to /traffic_waypoint
@@ -139,16 +143,16 @@ class TLDetector(object):
         if self.nearestWaypointIndex == -1:
             r = [(dl(wp.wp.pose.pose.position, pose.position), i) for i, wp in enumerate(self.waypoints)]
             return min(r, key=lambda x: x[0])[1]
-        # previous nearest waypoint known, so scan points immediately after (& before)
+        # Previous nearest waypoint known, so scan points immediately after (& before)
         else:
-            d = dl(self.waypoints[self.nearestWaypointIndex].wp.pose.pose.position, pose.pose.position)
+            d = dl(self.waypoints[self.nearestWaypointIndex].wp.pose.pose.position, pose.position)
             # scan right
             i = self.nearestWaypointIndex
             d1 = d
             found = False
             while True:
                 i = (i + 1) % self.num_waypoints
-                d2 = dl(self.waypoints[i].wp.pose.pose.position, pose.pose.position)
+                d2 = dl(self.waypoints[i].wp.pose.pose.position, pose.position)
                 if d2 > d1:
                     break
                 d1 = d2
@@ -162,7 +166,7 @@ class TLDetector(object):
             found = False
             while True:
                 i = (i - 1) % self.num_waypoints
-                d2 = dl(self.waypoints[i].wp.pose.pose.position, pose.pose.position)
+                d2 = dl(self.waypoints[i].wp.pose.pose.position, pose.position)
                 if d2 > d1:
                     break
                 d1 = d2
@@ -182,8 +186,9 @@ class TLDetector(object):
             int: index of the closest waypoint in self.waypoints
 
         """
-        closest_waypoint = self.getNearestWaypointIndex(pose)
-
+        # Set the nearestWaypointIndex
+        self.nearestWaypointIndex = self.getNearestWaypointIndex(pose)
+        #rospy.loginfo("Nearest WP Index: %d", self.nearestWaypointIndex)
         return 0
 
     def project_to_image_plane(self, point_in_world):
