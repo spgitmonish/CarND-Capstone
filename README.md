@@ -1,13 +1,13 @@
 This is the project repo for the final project of the Udacity Self-Driving Car Nanodegree: Programming a Real Self-Driving Car. For more information about the project, see the project introduction [here](https://classroom.udacity.com/nanodegrees/nd013/parts/6047fe34-d93c-4f50-8336-b70ef10cb4b2/modules/e1a23b06-329a-4684-a717-ad476f0d8dff/lessons/462c933d-9f24-42d3-8bdc-a08a5fc866e4/concepts/5ab4b122-83e6-436d-850f-9f4d26627fd9).
 
-### Installation 
+### Installation
 
-* Be sure that your workstation is running Ubuntu 16.04 Xenial Xerus or Ubuntu 14.04 Trusty Tahir. [Ubuntu downloads can be found here](https://www.ubuntu.com/download/desktop). 
+* Be sure that your workstation is running Ubuntu 16.04 Xenial Xerus or Ubuntu 14.04 Trusty Tahir. [Ubuntu downloads can be found here](https://www.ubuntu.com/download/desktop).
 * If using a Virtual Machine to install Ubuntu, use the following configuration as minimum:
   * 2 CPU
   * 2 GB system memory
   * 25 GB of free hard drive space
-  
+
   The Udacity provided virtual machine has ROS and Dataspeed DBW already installed, so you can skip the next two steps if you are using this.
 
 * Follow these instructions to install ROS
@@ -29,6 +29,16 @@ git clone https://github.com/udacity/CarND-Capstone.git
 cd CarND-Capstone
 pip install -r requirements.txt
 ```
+> **NOTE** The following step *MUST* be followed for YOLO prediction to be successful. This is because YOLO module darfklow which in turn uses Cython modules to make predcitions. Cython modules need to be compiled before execution by python modules.
+
+> 1. Navigate to ros/src/tl_detector
+> 2. Build Cython extensions in place by running: python setup.py build_ext --inplace
+> 3. OPTIONAL: Install with pip globally: pip install .
+
+> More information about darkflow:
+> 1. https://pjreddie.com/darknet/
+> 2. https://github.com/thtrieu/darkflow
+
 3. Make and run styx
 ```bash
 cd ros
@@ -56,4 +66,3 @@ roslaunch launch/site.launch
 
 ### Run Tests locally
 To run the tests, do 'catkin_make' and 'source devel/setup.bash' in the ros directory.  go to the build folder with 'cd build'.  From /ros/build use the command 'make run_tests' and it goes and runs all the unit tests!  It takes some doing to connect the test files with the build system, but now that I have the first couple done, you can use them as an example to add more tests.  You need to add rostest to package.xml as a build dependency.  You need to create a test file xml that has similar xml tags as the .launch files, except the all-important /test\ tag that points the build system to the test file.  Then the unit test files themselves need some rostest functions, but you can look at the twist_controller_test.py file for those.
-

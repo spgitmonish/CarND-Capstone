@@ -12,7 +12,7 @@ from styx_msgs.msg import TrafficLightArray, TrafficLight
 from styx_msgs.msg import Lane
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
-from light_classification.tl_classifier import TLClassifier, TLClassifierSqueeze, TLClassifierVGG16
+from tl_yolo_classifier import TLClassifier
 
 # Func to calculate cartesian distance
 dl = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
@@ -48,14 +48,14 @@ class TLDetector(object):
         self.last_state = TrafficLight.UNKNOWN
         self.last_wp = -1
         self.state_count = 0
-        
+
         config_string = rospy.get_param("/traffic_light_config")
         self.config = yaml.load(config_string)
         # One time initialization of the light positions
         self.light_positions = self.config['light_positions']
 
         #Put subs after variable inits to avoid race condition (call backs arriving during init)
-        
+
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         self.sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
@@ -275,7 +275,7 @@ class TLDetector(object):
             self.prev_light_loc = None
             return False
 
-        cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "rgb8")
+        cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
 
         #x, y = self.project_to_image_plane(light.pose.pose.position)
@@ -294,7 +294,7 @@ class TLDetector(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
-        state = self.get_light_state()
+        state, bounding_box = self.get_light_state()
 
         # Only get the closest way point index if the light state is RED/GREEN/YELLOW
         if self.pose and state != TrafficLight.UNKNOWN:
