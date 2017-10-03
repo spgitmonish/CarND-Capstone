@@ -37,6 +37,10 @@ class TLDetector(object):
         self.camera_image = None
         self.lights = []
 
+        self.nearestWaypointIndex = -1
+        self.num_waypoints = 0
+        self.waypoints = None
+
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         self.sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
@@ -63,10 +67,6 @@ class TLDetector(object):
         self.last_state = TrafficLight.UNKNOWN
         self.last_wp = -1
         self.state_count = 0
-
-        self.nearestWaypointIndex = -1
-        self.num_waypoints = 0
-        self.waypoints = None
 
         # One time initialization of the light positions
         self.light_positions = self.config['light_positions']

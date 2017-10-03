@@ -48,16 +48,7 @@ def distance2d(x1, y1, x2, y2):
 class WaypointUpdater(object):
     def __init__(self):
         rospy.init_node('waypoint_updater')
-        rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
-        self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
-        rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
-
-        # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
-        self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
-
         #self.traffic_debug_sub = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_debug_cb)
-
-        # TODO: Add other member variables you need below
 
         self.current_pose = None
         self.velocity = 0
@@ -68,9 +59,14 @@ class WaypointUpdater(object):
         
         self.tf_waypoints = None
         self.traffic_light = None
+
         # initial state machine state
         self.fsm_state = FSM['GO']
 
+        rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
+        self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
+        rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
+        self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
         rospy.spin()
 
 
