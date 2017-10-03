@@ -10,6 +10,8 @@ from keras.models import model_from_yaml
 from keras.applications.vgg16 import VGG16
 import keras.applications.vgg16
 
+CONFIDENCE_THRESHOLD = 0.8
+
 class TLClassifier(object):
     def __init__(self):
         # Load the model
@@ -37,7 +39,12 @@ class TLClassifier(object):
         img = cv2.resize(img, (299, 299))
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = np.expand_dims(img, 0)
-        g_x = np.argmax(self.model.predict(img)[0])
+        probs = self.model.predict(img)[0]
+        g_x = np.argmax(probs)
+        #rospy.loginfo("max val: %f", probs[g_x])
+        if probs[g_x] < CONFIDENCE_THRESHOLD:
+            return "UNKNOWN"
+
         # Kludge alert!
         g_x = (g_x - 2) % 4
 
