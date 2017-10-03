@@ -17,7 +17,7 @@ from light_classification.tl_classifier import TLClassifier, TLClassifierSqueeze
 # Func to calculate cartesian distance
 dl = lambda a, b: math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2  + (a.z-b.z)**2)
 
-STATE_COUNT_THRESHOLD = 3
+STATE_COUNT_THRESHOLD = 2
 
 class WaypointInfo(object):
     def __init__(self, wp_obj, dist_to_next, frenet_s):
@@ -40,7 +40,22 @@ class TLDetector(object):
         self.nearestWaypointIndex = -1
         self.num_waypoints = 0
         self.waypoints = None
+        self.bridge = CvBridge()
+        self.light_classifier = TLClassifier()
+        self.listener = tf.TransformListener()
 
+        self.state = TrafficLight.UNKNOWN
+        self.last_state = TrafficLight.UNKNOWN
+        self.last_wp = -1
+        self.state_count = 0
+        
+        config_string = rospy.get_param("/traffic_light_config")
+        self.config = yaml.load(config_string)
+        # One time initialization of the light positions
+        self.light_positions = self.config['light_positions']
+
+        #Put subs after variable inits to avoid race condition (call backs arriving during init)
+        
         sub1 = rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         self.sub2 = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
@@ -54,23 +69,7 @@ class TLDetector(object):
         sub3 = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_cb)
         sub6 = rospy.Subscriber('/image_color', Image, self.image_cb)
 
-        config_string = rospy.get_param("/traffic_light_config")
-        self.config = yaml.load(config_string)
-
         self.upcoming_red_light_pub = rospy.Publisher('/traffic_waypoint', Int32, queue_size=1)
-
-        self.bridge = CvBridge()
-        self.light_classifier = TLClassifier()
-        self.listener = tf.TransformListener()
-
-        self.state = TrafficLight.UNKNOWN
-        self.last_state = TrafficLight.UNKNOWN
-        self.last_wp = -1
-        self.state_count = 0
-
-        # One time initialization of the light positions
-        self.light_positions = self.config['light_positions']
-
         rospy.spin()
 
     def pose_cb(self, msg):
@@ -222,7 +221,7 @@ class TLDetector(object):
         self.nearestWaypointIndex = self.getNearestWaypointIndex(traffic_light_pose)
 
         # Add debug
-        rospy.loginfo("WP Index closes to the light is %d", self.nearestWaypointIndex)
+        rospy.loginfo("WP Index closest to the light is %d", self.nearestWaypointIndex)
 
         return self.nearestWaypointIndex
 
