@@ -17,10 +17,10 @@ class TLClassifier(object):
         # Compile the model
         self.model._make_predict_function()
         self.predictionary = {
-            0: "RED",
-            1: "ORANGE",
-            2: "GREEN",
-            3: "NOLIGHT"
+            0: TrafficLight.RED,
+            1: TrafficLight.YELLOW,
+            2: TrafficLight.GREEN,
+            3: TrafficLight.UNKNOWN
         }
 
     def get_classification(self, image):
@@ -41,11 +41,22 @@ class TLClassifier(object):
         # Kludge alert!
         g_x = (g_x - 2) % 4
 
-        # Log the message
-        rospy.loginfo("The label returned is %s", self.predictionary[g_x])
+        # Get the predicted value and associate a label for debug
+        prediction = self.predictionary[g_x]
+        if prediction == 0:
+            prediction_label = "RED"
+        elif prediction == 1:
+            prediction_label = "GREEN"
+        elif prediction == 2:
+            prediction_label = "YELLOW"
+        else:
+            prediction_label = "NOLIGHT"
 
-        # Return Unknown for now
-        return TrafficLight.UNKNOWN
+        # Log the message
+        rospy.loginfo("The label returned is %s", prediction_label)
+
+        # Return the light state corresponding to the index
+        return prediction
 
 class TLClassifierSqueeze(object):
     def __init__(self):

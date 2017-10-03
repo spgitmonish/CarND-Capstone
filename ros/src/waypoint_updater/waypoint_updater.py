@@ -6,8 +6,10 @@ from eventlet import event
 import rospy
 import tf
 
+from std_msgs.msg import Int32
 from geometry_msgs.msg import Pose, Point, PoseStamped, TwistStamped
-from styx_msgs.msg import Lane, Waypoint, TrafficLightArray, TrafficLight
+from styx_msgs.msg import Lane, Waypoint
+from __builtin__ import int
 
 '''
 This node will publish waypoints from the car's current position to some `x` distance ahead.
@@ -47,17 +49,7 @@ def distance2d(x1, y1, x2, y2):
 
 class WaypointUpdater(object):
     def __init__(self):
-        rospy.init_node('waypoint_updater')
-        rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
-        self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
-        rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
-
-        # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
-        self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
-
-        #self.traffic_debug_sub = rospy.Subscriber('/vehicle/traffic_lights', TrafficLightArray, self.traffic_debug_cb)
-
-        # TODO: Add other member variables you need below
+        rospy.init_node('waypoint_updater', anonymous=True)
 
         self.current_pose = None
         self.velocity = 0
@@ -67,10 +59,16 @@ class WaypointUpdater(object):
         self.desired_velocity = 0
         
         self.tf_waypoints = None
-        self.traffic_light = None
+        self.traffic_light = -1
+
         # initial state machine state
         self.fsm_state = FSM['GO']
-
+        
+        rospy.Subscriber('/traffic_waypoint', Int32, self.stop_at_wp_cb)
+        rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
+        self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
+        rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
+        self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
         rospy.spin()
 
 
@@ -91,26 +89,25 @@ class WaypointUpdater(object):
     def update_fsm(self):  
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
         if self.fsm_state == FSM['GO']:
-            if self.traffic_light != None:
+            if self.traffic_light > 0:
                 tf_distance = self.distanceToWaypoint(self.traffic_light)
                 if tf_distance < self.get_braking_distance() and tf_distance > 0:
                     self.fsm_state = FSM['STOPPING']
                     rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
-            else:
-                return # wait for light to turn off
                     
         elif self.fsm_state == FSM['STOPPING']:
-            if self.traffic_light != None:
-                tf_distance = self.distanceToWaypoint(self.traffic_light)
-                if self.velocity < 0.1:
-                    self.fsm_state = FSM['STOP']
-                    rospy.loginfo("distance: %f, veclocity: %f", tf_distance, self.velocity)
+            '''
+            if self.traffic_light < 0:
+                self.fsm_state = FSM['GO']
             else:
-                rospy.loginfo("light turned green - aborting stop, going again")
-                self.fsm_state = FSM["GO"]
-
+            '''
+            tf_distance = self.distanceToWaypoint(self.traffic_light)
+            if self.velocity < 0.1:
+                self.fsm_state = FSM['STOP']
+                rospy.loginfo("distance: %f, velocity: %f", tf_distance, self.velocity)
+                    
         elif self.fsm_state == FSM['STOP']:
-            if self.traffic_light == None:
+            if self.traffic_light < 0:
                 self.fsm_state = FSM['GO']
                 rospy.loginfo("going again")
 
@@ -266,12 +263,9 @@ class WaypointUpdater(object):
             else:
                 self.traffic_cb(-1)
 
-    def traffic_cb(self, trafficLightwaypointIndex):
-        rospy.loginfo("traffic_cb called with %d", trafficLightwaypointIndex)
-        if trafficLightwaypointIndex == -1:
-            self.traffic_light = None
-        else:
-            self.traffic_light = trafficLightwaypointIndex
+    def stop_at_wp_cb(self, stopIndexInt32):
+        self.traffic_light = stopIndexInt32.data
+        rospy.loginfo("waypoint stop at called with %d", self.traffic_light)
 
     def obstacle_cb(self, msg):
         # TODO: Callback for /obstacle_waypoint message. We will implement it later
