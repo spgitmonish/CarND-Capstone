@@ -37,30 +37,25 @@ class TLClassifier(object):
         img = np.float32(image)
         img = preprocess_input(img)
         img = cv2.resize(img, (299, 299))
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = np.expand_dims(img, 0)
         probs = self.model.predict(img)[0]
         g_x = np.argmax(probs)
         #rospy.loginfo("max val: %f", probs[g_x])
         if probs[g_x] < CONFIDENCE_THRESHOLD:
-            return "UNKNOWN"
+            return TrafficLight.UNKNOWN
 
         # Kludge alert!
-        g_x = (g_x - 2) % 4
-
-        # Get the predicted value and associate a label for debug
-        prediction = self.predictionary[g_x]
-        if prediction == 0:
-            prediction_label = "RED"
-        elif prediction == 1:
-            prediction_label = "GREEN"
-        elif prediction == 2:
-            prediction_label = "YELLOW"
+        if g_x == 2:
+            prediction = 0 # Red
+        elif g_x == 0:
+            prediction = 1 # Yellow
+        elif g_x == 3:
+            prediction = 2 # Green
         else:
-            prediction_label = "NOLIGHT"
+            prediction = 3 # No light
 
         # Log the message
-        rospy.loginfo("The label returned is %s", prediction_label)
+        rospy.loginfo("The label returned is %d", prediction)
 
         # Return the light state corresponding to the index
         return prediction
@@ -124,8 +119,13 @@ class TLClassifierVGG16(object):
     def __init__(self):
         # Load the model
         self.model = load_model(os.getcwd() + "/light_classification/" + "vgg16.h5")
-
         self.model._make_predict_function()
+        self.predictionary = {
+            0: TrafficLight.RED,
+            1: TrafficLight.YELLOW,
+            2: TrafficLight.GREEN,
+            3: TrafficLight.UNKNOWN
+        }
 
     def get_classification(self, image):
         """Determines the color of the traffic light in the image
@@ -137,13 +137,14 @@ class TLClassifierVGG16(object):
 
         """
         img = cv2.resize(image, None, fx=0.5, fy=0.5)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
+        img = img.astype(np.float32)
         img = keras.applications.vgg16.preprocess_input(img)
-        pred = self.model.predict(np.array([img]), batch_size=1, verbose=1)
-        g_x = np.argmax(pred[0])
-
-        # Log the message
-        rospy.loginfo("The label returned is %d", (g_x - 2) % 4)
+        probs = self.model.predict(np.array([img]), batch_size=1, verbose=1)[0]
+        g_x = np.argmax(probs)
+        label = TrafficLight.UNKNOWN
+        if probs[g_x] > CONFIDENCE_THRESHOLD:
+            label = self.predictionary[g_x] 
 
         # Return Unknown for now
-        return g_x
+        rospy.loginfo("label: %d, conf: %f, %f, %f, %f", g_x, probs[0], probs[1], probs[2], probs[3])
+        return label
