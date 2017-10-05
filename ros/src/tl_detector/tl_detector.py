@@ -41,7 +41,7 @@ class TLDetector(object):
         self.num_waypoints = 0
         self.waypoints = None
         self.bridge = CvBridge()
-        self.light_classifier = TLClassifier()
+        self.light_classifier = TLClassifierVGG16()
         self.listener = tf.TransformListener()
 
         self.state = TrafficLight.UNKNOWN

@@ -9,6 +9,7 @@ from keras.models import load_model
 from keras.models import model_from_yaml
 from keras.applications.vgg16 import VGG16
 import keras.applications.vgg16
+import timeit
 
 CONFIDENCE_THRESHOLD = 0.8
 
@@ -34,6 +35,7 @@ class TLClassifier(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
+        start_time = timeit.default_timer()
         img = np.float32(image)
         img = preprocess_input(img)
         img = cv2.resize(img, (299, 299))
@@ -53,9 +55,10 @@ class TLClassifier(object):
             prediction = 2 # Green
         else:
             prediction = 3 # No light
+        elapsed_time = timeit.default_timer() - start_time
 
         # Log the message
-        rospy.loginfo("The label returned is %d", prediction)
+        rospy.loginfo("label: %d, conf: %f %% time: %f", prediction, probs[g_x]*100., elapsed_time)
 
         # Return the light state corresponding to the index
         return prediction
@@ -118,7 +121,9 @@ class TLClassifierSqueeze(object):
 class TLClassifierVGG16(object):
     def __init__(self):
         # Load the model
-        self.model = load_model(os.getcwd() + "/light_classification/" + "vgg16.h5")
+        with open(os.getcwd() + "/light_classification/" + "vgg16_model.yaml", "r") as yaml_file:
+            self.model = model_from_yaml(yaml_file.read())
+            self.model.load_weights(os.getcwd() + "/light_classification/" + "vgg16_model.h5")
         self.model._make_predict_function()
         self.predictionary = {
             0: TrafficLight.RED,
@@ -136,6 +141,7 @@ class TLClassifierVGG16(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
+        start_time = timeit.default_timer()
         img = cv2.resize(image, None, fx=0.5, fy=0.5)
         img = img.astype(np.float32)
         img = keras.applications.vgg16.preprocess_input(img)
@@ -143,8 +149,9 @@ class TLClassifierVGG16(object):
         g_x = np.argmax(probs)
         label = TrafficLight.UNKNOWN
         if probs[g_x] > CONFIDENCE_THRESHOLD:
-            label = self.predictionary[g_x] 
+            label = self.predictionary[g_x]
+        elapsed_time = timeit.default_timer() - start_time
 
         # Return Unknown for now
-        rospy.loginfo("label: %d, conf: %f, %f, %f, %f", g_x, probs[0], probs[1], probs[2], probs[3])
+        rospy.loginfo("label: %d, conf: %f %% time: %f", g_x, probs[g_x]*100., elapsed_time)
         return label
