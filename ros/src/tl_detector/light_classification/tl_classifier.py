@@ -9,11 +9,15 @@ from keras.models import load_model
 from keras.models import model_from_yaml
 from keras.applications.vgg16 import VGG16
 import keras.applications.vgg16
+import keras.backend.tensorflow_backend as K
 
 CONFIDENCE_THRESHOLD = 0.8
 
 class TLClassifier(object):
     def __init__(self):
+        config = K.tf.ConfigProto()
+        config.gpu_options.allow_growth=True
+        K.set_session(K.tf.Session(config=config))
         # Load the model
         self.model = load_model(os.getcwd() + "/light_classification/" + "inceptv3beta0.h5")
         # Compile the model
