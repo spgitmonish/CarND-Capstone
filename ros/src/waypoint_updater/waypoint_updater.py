@@ -27,17 +27,17 @@ as well as to verify your TL classifier.
 TIME_PERIOD_PUBLISHED = 4. #sec
 LOOKAHEAD_WPS = 10 # Number of waypoints we will publish. You can change this number
 TIME_STEP = TIME_PERIOD_PUBLISHED / LOOKAHEAD_WPS
-SPEED_LIMIT = 10.0 # m/s
-LIGHT_RED = 0
-LIGHT_ORANGE = 1
 LIGHT_GREEN = 2
 
 #finite states
-FSM = {'STOP':0,
-        'GO':1,
-        'STOPPING':2}
+FSM = { 'STOP':0,   # Car is stopped, waiting for light to clear
+        'GO':1,     # Car is cruising, accelarate to reach speed limit
+        'STOPPING':2} # Car is slowing down
 
 class WaypointInfo(object):
+    """
+    Encapsulates waypoint data
+    """
     def __init__(self, wp_obj, dist_to_next, frenet_s):
         self.wp = wp_obj
         self.width = dist_to_next
@@ -45,32 +45,53 @@ class WaypointInfo(object):
         self.t = 0.
 
 def distance2d(x1, y1, x2, y2):
+    # returns euclidean distance
     return math.sqrt( (x2-x1)**2 + (y2-y1)**2 )
 
 class WaypointUpdater(object):
+    """
+    Publishes waypoint data for navigating car:
+    - slow down and stop at intersections
+    - speed up and reach speed limit if there are no obstructions
+    """
     def __init__(self):
-        global SPEED_LIMIT
         rospy.init_node('waypoint_updater', anonymous=True)
 
+        # data received from other ROS nodes
         self.current_pose = None
         self.velocity = 0
         self.waypoints = None
         self.num_waypoints = 0
+
+        # stores index of waypoint that is closest to car's current position
         self.nearestWaypointIndex = -1
-        self.desired_velocity = 0
-        
-        self.tf_waypoints = None
+
+        # contains waypoint of next RED traffic light, -1 if there is no light or if its green
         self.traffic_light = -1
 
         # initial state machine state
         self.fsm_state = FSM['GO']
 
-        SPEED_LIMIT = rospy.get_param('~velocity', 40) * 0.278 # KM/HR to M/S
-        
+        # read speed limit from ros parameter
+        self.speed_limit = rospy.get_param('/waypoint_loader/velocity', 40) * 0.278 # KM/HR to M/S
+
+        # subscribe to traffic light waypoint data from tl_detector
         rospy.Subscriber('/traffic_waypoint', Int32, self.stop_at_wp_cb)
+
+        # subscribe to current position
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
+
+        # subscribe to recieve waypoint data
         self.base_waypoint_sub = rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
+
+        # subscribe to receive vehicle's velocity
         rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
+
+        # Traffic light waypoint data from /vehicle/traffic_light
+        # used only for debugging
+        #self.tf_waypoints = None
+
+        # publisher for sending out waypoints with velocity to twist_controller
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
         rospy.spin()
 
@@ -89,15 +110,20 @@ class WaypointUpdater(object):
         self.update_fsm()
         self.publish_waypoints()
 
-    def update_fsm(self):  
+    def update_fsm(self):
+        """
+        Updates state machine given current state of car and traffic light data
+        """
         #rospy.loginfo("closest waypoint: %d; x,y: (%f,%f)", wp_start, *self.get_waypoint_coordinate(wp_start))
+        # GO state - cruising normally
         if self.fsm_state == FSM['GO']:
             if self.traffic_light > 0:
                 tf_distance = self.distanceToWaypoint(self.traffic_light)
                 if tf_distance < self.get_braking_distance() and tf_distance > 0:
                     self.fsm_state = FSM['STOPPING']
                     rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
-                    
+
+        # STOPPING state - slowing down at an intersection
         elif self.fsm_state == FSM['STOPPING']:
             if self.traffic_light < 0:
                 self.fsm_state = FSM['GO']
@@ -106,16 +132,21 @@ class WaypointUpdater(object):
                 if self.velocity < 0.1:
                     self.fsm_state = FSM['STOP']
                     rospy.loginfo("distance: %f, velocity: %f", tf_distance, self.velocity)
-                    
+
+        # STOP state: car has stopped, waiting for light to clear
         elif self.fsm_state == FSM['STOP']:
             if self.traffic_light < 0:
                 self.fsm_state = FSM['GO']
                 rospy.loginfo("going again")
 
     def publish_waypoints(self):
+        """
+        Creates a trjectory based on current state
+        Broadcast waypoints to other ROS nodes on /waypoint_updater/final_waypoints
+        """
         waypoints = []
         if self.fsm_state == FSM['GO']:
-            waypoints = self.make_trajectory(SPEED_LIMIT)
+            waypoints = self.make_trajectory(self.speed_limit)
         elif self.fsm_state==FSM['STOPPING']:
             waypoints = self.make_trajectory(0)
         else:
@@ -129,6 +160,9 @@ class WaypointUpdater(object):
         self.final_waypoints_pub.publish(lane)
         
     def make_trajectory(self,end_speed):
+        """
+        Select next n waypoints from current position and set target velocity
+        """
         copyStart = self.nearestWaypointIndex
         next_wps = [] 
         for i in range(LOOKAHEAD_WPS):
@@ -140,6 +174,10 @@ class WaypointUpdater(object):
         return next_wps
 
     def stopped_waypoints(self):
+        """
+        Make an trjectory for the stopped car by repeating same waypoint n times
+        and velocity set to 0
+        """
         # waypoints for when the car is to stop -repeat same position with v=0
         self.output = []
         for t in np.arange(TIME_STEP, TIME_PERIOD_PUBLISHED, TIME_STEP ):
@@ -202,6 +240,8 @@ class WaypointUpdater(object):
 
     def get_braking_distance(self):
         """
+        Returns distance car will travel to come to a complete stop, given current speed.
+
         Ran trials and logged values for initial velocity (u), distance (s) and time (t) to come to a stop.
         Substituting values in s=ut+0.5at^2, we determined that decelaration is ~ 2.1m/s^2.
         t=-u/a for final velocity of 0.
@@ -210,11 +250,12 @@ class WaypointUpdater(object):
         """
         return ((self.velocity**2) / (2*2.1)) + 35
 
+    # Callback to recieve velocity messages
     def velocity_cb(self, vel):
         self.velocity = vel.twist.linear.x
 
     # Waypoint callback - data from /waypoint_loader
-    # I expect this to be constant, so we cache it and dont handle beyond 1st call
+    # Since this is constant, so we cache it and un-subscribe after first call
     def waypoints_cb(self, base_lane):
         if self.waypoints == None:
             rospy.loginfo("waypoints_cb::%d", len(base_lane.waypoints))
@@ -236,6 +277,9 @@ class WaypointUpdater(object):
             # unregister from waypoint callback - huge improvement in speed
             self.base_waypoint_sub.unregister()
 
+    """
+    Callback handler for /vehicle/traffic_light data
+    - used only for testing and debugging
     def traffic_debug_cb(self, tf_arr):
         if self.tf_waypoints == None:
             tf_waypoints = []
@@ -263,10 +307,12 @@ class WaypointUpdater(object):
                     self.traffic_cb(tf_wp)
             else:
                 self.traffic_cb(-1)
+    """
 
+    # callback to receive traffic light waypoint from tl_detector
     def stop_at_wp_cb(self, stopIndexInt32):
         self.traffic_light = stopIndexInt32.data
-        rospy.loginfo("waypoint stop at called with %d", self.traffic_light)
+        #rospy.loginfo("waypoint stop at called with %d", self.traffic_light)
 
     def obstacle_cb(self, msg):
         # TODO: Callback for /obstacle_waypoint message. We will implement it later
@@ -280,6 +326,7 @@ class WaypointUpdater(object):
     def set_waypoint_velocity(self, waypoints, waypoint, velocity):
         waypoints[waypoint].twist.twist.linear.x = velocity
 
+    # Return coordinates for a given waypoint
     def get_waypoint_coordinate(self, wp):
         return (self.waypoints[wp].wp.pose.pose.position.x, self.waypoints[wp].wp.pose.pose.position.y)
     

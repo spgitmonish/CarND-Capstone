@@ -14,12 +14,18 @@ import keras.backend.tensorflow_backend as K
 CONFIDENCE_THRESHOLD = 0.8
 
 class TLClassifier(object):
+    """
+    InceptionV3 model
+    """
     def __init__(self):
+        # Keras GPU optimization settings
         config = K.tf.ConfigProto()
         config.gpu_options.allow_growth=True
         K.set_session(K.tf.Session(config=config))
+
         # Load the model
         self.model = load_model(os.getcwd() + "/light_classification/" + "inceptv3beta0.h5")
+
         # Compile the model
         self.model._make_predict_function()
         self.predictionary = {
@@ -38,17 +44,21 @@ class TLClassifier(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
+        # Image pre-processing pipleine
         img = np.float32(image)
         img = preprocess_input(img)
         img = cv2.resize(img, (299, 299))
         img = np.expand_dims(img, 0)
+        # Execute model's predictions - return probability value for each of 4 classes
         probs = self.model.predict(img)[0]
+        # get class with max probability
         g_x = np.argmax(probs)
-        #rospy.loginfo("max val: %f", probs[g_x])
+
+        # reject if model is not confident about the prediction
         if probs[g_x] < CONFIDENCE_THRESHOLD:
             return TrafficLight.UNKNOWN
 
-        # Kludge alert!
+        # Swap label values as model was trained with different label values
         if g_x == 2:
             prediction = 0 # Red
         elif g_x == 0:
@@ -65,6 +75,9 @@ class TLClassifier(object):
         return prediction
 
 class TLClassifierSqueeze(object):
+    """
+    Squeezenet model
+    """
     def __init__(self):
         '''Hyperparameters'''
         self.num_classes = 3
@@ -120,6 +133,9 @@ class TLClassifierSqueeze(object):
         return TrafficLight.UNKNOWN
 
 class TLClassifierVGG16(object):
+    """
+    VGG16 model
+    """
     def __init__(self):
         # Load the model
         self.model = load_model(os.getcwd() + "/light_classification/" + "vgg16.h5")
@@ -140,15 +156,19 @@ class TLClassifierVGG16(object):
             int: ID of traffic light color (specified in styx_msgs/TrafficLight)
 
         """
+        # Image pre-processing pipeline
         img = cv2.resize(image, None, fx=0.5, fy=0.5)
         img = img.astype(np.float32)
         img = keras.applications.vgg16.preprocess_input(img)
+        # Execute prediction
         probs = self.model.predict(np.array([img]), batch_size=1, verbose=1)[0]
+        # get label with max probability
         g_x = np.argmax(probs)
-        label = TrafficLight.UNKNOWN
-        if probs[g_x] > CONFIDENCE_THRESHOLD:
-            label = self.predictionary[g_x] 
 
-        # Return Unknown for now
+        # reject if model is not confident
+        if probs[g_x] < CONFIDENCE_THRESHOLD:
+            return TrafficLight.UNKNOWN
+
+        label = self.predictionary[g_x]
         rospy.loginfo("label: %d, conf: %f, %f, %f, %f", g_x, probs[0], probs[1], probs[2], probs[3])
         return label
