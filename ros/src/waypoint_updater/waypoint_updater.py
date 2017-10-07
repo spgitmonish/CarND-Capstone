@@ -49,6 +49,7 @@ def distance2d(x1, y1, x2, y2):
 
 class WaypointUpdater(object):
     def __init__(self):
+        global SPEED_LIMIT
         rospy.init_node('waypoint_updater', anonymous=True)
 
         self.current_pose = None
@@ -63,6 +64,8 @@ class WaypointUpdater(object):
 
         # initial state machine state
         self.fsm_state = FSM['GO']
+
+        SPEED_LIMIT = rospy.get_param('~velocity', 40) * 0.278 # KM/HR to M/S
         
         rospy.Subscriber('/traffic_waypoint', Int32, self.stop_at_wp_cb)
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
@@ -96,15 +99,13 @@ class WaypointUpdater(object):
                     rospy.loginfo("slowing for traffic light at waypoint: %d", self.traffic_light)
                     
         elif self.fsm_state == FSM['STOPPING']:
-            '''
             if self.traffic_light < 0:
                 self.fsm_state = FSM['GO']
             else:
-            '''
-            tf_distance = self.distanceToWaypoint(self.traffic_light)
-            if self.velocity < 0.1:
-                self.fsm_state = FSM['STOP']
-                rospy.loginfo("distance: %f, velocity: %f", tf_distance, self.velocity)
+                tf_distance = self.distanceToWaypoint(self.traffic_light)
+                if self.velocity < 0.1:
+                    self.fsm_state = FSM['STOP']
+                    rospy.loginfo("distance: %f, velocity: %f", tf_distance, self.velocity)
                     
         elif self.fsm_state == FSM['STOP']:
             if self.traffic_light < 0:
@@ -207,7 +208,7 @@ class WaypointUpdater(object):
         Therefore for any arbitrary u, s = -u^2 / 2*a.
         Add to that the distance from light (30m)         
         """
-        return ((self.velocity**2) / (2*2.1)) + 30
+        return ((self.velocity**2) / (2*2.1)) + 35
 
     def velocity_cb(self, vel):
         self.velocity = vel.twist.linear.x

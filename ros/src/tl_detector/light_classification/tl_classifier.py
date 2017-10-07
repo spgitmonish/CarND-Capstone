@@ -52,9 +52,9 @@ class TLClassifier(object):
         if g_x == 2:
             prediction = 0 # Red
         elif g_x == 0:
-            prediction = 1 # Yellow
-        elif g_x == 3:
             prediction = 2 # Green
+        elif g_x == 3:
+            prediction = 1 # Yellow
         else:
             prediction = 3 # No light
 
