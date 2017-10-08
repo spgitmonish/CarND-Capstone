@@ -1,5 +1,82 @@
-This is the project repo for the final project of the Udacity Self-Driving Car Nanodegree: Programming a Real Self-Driving Car. For more information about the project, see the project introduction [here](https://classroom.udacity.com/nanodegrees/nd013/parts/6047fe34-d93c-4f50-8336-b70ef10cb4b2/modules/e1a23b06-329a-4684-a717-ad476f0d8dff/lessons/462c933d-9f24-42d3-8bdc-a08a5fc866e4/concepts/5ab4b122-83e6-436d-850f-9f4d26627fd9).
+# Udacity Self-Driving Car Nanodegree Capstone: Programming a Real Self-Driving Car
 
+## Introduction
+During this Nanodegree we learned about different aspects of Self Driving Car/Autonomous technologies like Deep Learning, Computer Vision, Sensor Fusion, Localization, Controllers & Path Planning. The goal of this project is to use 3 aspects(Perception, Path Planning and Controls) and make the a simulated car drive autonomously around a simulated track and then also on a real track on a real car obeying speed limits and also obeying traffic light rules. 
+
+This is the project repo for the final project of the Udacity Self-Driving Car Nanodegree: Programming a Real Self-Driving Car by:
+
+* [Anand Dinakar(ananddinakar@gmail.com)](https://github.com/cygnus77)
+* [Dan Bergeland(danbergeland@gmail.com)](https://github.com/danbergeland)
+* [Doug Brummel(doug.brummell@gmail.com)](https://github.com/d13sl0w) 
+* [Monish Sunku Prabhakar(sunku.monish@colorado.edu)](https://github.com/spgitmonish)
+
+## Overview 
+For this project, we wrote ROS nodes to implement core functionality of the autonomous vehicle system, including traffic light detection, control, and waypoint following. The following is a system architecture diagram showing the ROS nodes and topics used in the project. 
+
+<p align="center">
+   <img src="imgs/ROSGraph.png">
+</p>
+<p align="center">
+   <i>Figure 1: Project Architecture</i>
+</p>
+
+### Perception
+This module is responsible for detecting the color of the traffic light in sight and publish the closest way(index of the) point to the light if the light color is Red or Yellow. The traffic light detection node subscribes to three topics in order to publish the necessary result to */traffic_waypoints*:
+
+1. */base_waypoints*: Provides the complete list of waypoints for the course.
+2. */current_pose*: Used to determine the vehicle's location.
+3. */image_color*: Provides an image stream from the car's camera. These images are used to determine the color of upcoming traffic lights.
+
+We used the Inception-V3 model for training on an images dataset and for inference in real-time.
+
+> **NOTE**: We as a team experimented with SqueezeNet, VGG16 as well as YOLO(required external libraries) as models for perception but decided to use Inception-V3 as the final model for inference.  
+
+<p align="center">
+   <img src="imgs/TrafficLightDetector.png">
+</p>
+<p align="center">
+   <i>Figure 2: Perception</i>
+</p>
+
+`Code: ../ros/src/tl_detector.py, ../ros/src/tl_detector/light_classifier/tl_classifier.py`
+
+### Planning
+The purpose of this module is to publish a fixed number of waypoints ahead of the vehicle with the correct target velocities, depending on traffic lights and obstacles. This module subscribes to */current_pose* to get the current position of the car and */traffic_waypoints* topic to get the closest waypoint to the upcoming traffic light.
+
+This module publishes */base_waypoints* to the topic a list of all waypoints for the track, so this list includes waypoints both before and after the vehicle (Waypoint Loader, the publisher for */base_waypoints* publishes only once). 
+
+The second topic this module publishes to */final_waypoints* is the list of fixed number of waypoints currently ahead of the vehicle. The first waypoint in the list published to */final_waypoints* should be the first waypoint that is currently ahead of the car.
+
+<p align="center">
+   <img src="imgs/WaypointUpdater.png">
+</p>
+<p align="center">
+   <i>Figure 3: Planning</i>
+</p>
+
+`Code: ../ros/src/waypoint_updater/waypoint_updater.py`
+
+### Control
+Once messages are being published to */final_waypoints*, the vehicle's waypoint follower will publish twist commands to the */twist_cmd* topic. the drive-by-wire node which subscribes to */twist_cmd* and uses various controllers to provide appropriate throttle, brake, and steering commands. These commands are then be published to the following topics:
+
+1. */vehicle/throttle_cmd*
+2. */vehicle/brake_cmd*
+3. */vehicle/steering_cmd*
+
+This module subscribes to the */vehicle/dbw_enabled* topic because a safety driver may take control of the car during testing, and it's not assumed that the car is always following the commands. If a safety driver does take over, the controller will mistakenly accumulate error.
+
+In the simulator, DBW is always enabled but not in the actual car.
+
+<p align="center">
+   <img src="imgs/DBWNode.png">
+</p>
+<p align="center">
+   <i>Figure 4: Control</i>
+</p>
+
+`Code: ../ros/src/twist_controller/`
+
+## Setup
 ### Installation 
 
 * Be sure that your workstation is running Ubuntu 16.04 Xenial Xerus or Ubuntu 14.04 Trusty Tahir. [Ubuntu downloads can be found here](https://www.ubuntu.com/download/desktop). 
@@ -23,7 +100,6 @@ This is the project repo for the final project of the Udacity Self-Driving Car N
 ```bash
 git clone https://github.com/udacity/CarND-Capstone.git
 ```
-
 2. Install python dependencies
 ```bash
 cd CarND-Capstone
@@ -38,7 +114,12 @@ roslaunch launch/styx.launch
 ```
 4. Run the simulator
 
+### Run Tests locally
+
+To run the tests, do 'catkin_make' and 'source devel/setup.bash' in the ros directory.  Go to the build folder with 'cd build'. From /ros/build use the command 'make run_tests' and it goes and runs all the unit tests!  It takes some doing to connect the test files with the build system, but now that I have the first couple done, you can use them as an example to add more tests.  You need to add rostest to package.xml as a build dependency.  You need to create a test file xml that has similar xml tags as the .launch files, except the all-important /test\ tag that points the build system to the test file.  Then the unit test files themselves need some rostest functions, but you can look at the twist_controller_test.py file for those.
+
 ### Real world testing
+
 1. Download [training bag](https://drive.google.com/file/d/0B2_h37bMVw3iYkdJTlRSUlJIamM/view?usp=sharing) that was recorded on the Udacity self-driving car
 2. Unzip the file
 ```bash
@@ -54,6 +135,5 @@ cd CarND-Capstone/ros
 roslaunch launch/site.launch
 ```
 
-### Run Tests locally
-To run the tests, do 'catkin_make' and 'source devel/setup.bash' in the ros directory.  go to the build folder with 'cd build'.  From /ros/build use the command 'make run_tests' and it goes and runs all the unit tests!  It takes some doing to connect the test files with the build system, but now that I have the first couple done, you can use them as an example to add more tests.  You need to add rostest to package.xml as a build dependency.  You need to create a test file xml that has similar xml tags as the .launch files, except the all-important /test\ tag that points the build system to the test file.  Then the unit test files themselves need some rostest functions, but you can look at the twist_controller_test.py file for those.
-
+## Final Thoughts
+This project is the culmination of almost 12 months of learning. Our team included members from 3 different regions and time-zones of the country. It was really gratifying to make the design the different modules and ensure that the pieces work together to have a safe, compliant and working solution.
