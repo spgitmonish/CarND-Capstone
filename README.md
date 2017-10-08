@@ -1,7 +1,7 @@
 # Udacity Self-Driving Car Nanodegree Capstone: Programming a Real Self-Driving Car
 
 ## Introduction
-During this Nanodegree we learned about different aspects of Self Driving Car/Autonomous technologies like Deep Learning, Computer Vision, Sensor Fusion, Localization, Controllers & Path Planning. The goal of this project is to use 3 aspects(Perception, Path Planning and Controls) and make the a simulated car drive autonomously around a simulated track. Then, also on a real track on a real car obeying speed limits and traffic light rules. 
+During this Nanodegree we learned about different aspects of Self Driving Car/Autonomous technologies like Deep Learning, Computer Vision, Sensor Fusion, Localization, Controllers & Path Planning. The goal of this project is to use 3 aspects(Perception, Path Planning and Controls) and make a simulated car drive autonomously around a simulated track. Then, also on a real track on a real car obeying speed limits and traffic light rules. 
 
 This is the project repo for the final project of the Udacity Self-Driving Car Nanodegree: Programming a Real Self-Driving Car by:
 
