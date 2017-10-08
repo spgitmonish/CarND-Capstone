@@ -7,7 +7,7 @@ This is the project repo for the final project of the Udacity Self-Driving Car N
 
 * [Anand Dinakar(ananddinakar@gmail.com)](https://github.com/cygnus77)
 * [Dan Bergeland(danbergeland@gmail.com)](https://github.com/danbergeland)
-* [Doug Brummel(doug.brummell@gmail.com)](https://github.com/d13sl0w) 
+* [Doug Brummel(doug.brummell@gmail.com)](https://github.com/d13sl0w) (Team Lead)
 * [Monish Sunku Prabhakar(sunku.monish@colorado.edu)](https://github.com/spgitmonish)
 
 ## Overview 
