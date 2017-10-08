@@ -1,7 +1,7 @@
 # Udacity Self-Driving Car Nanodegree Capstone: Programming a Real Self-Driving Car
 
 ## Introduction
-During this Nanodegree we learned about different aspects of Self Driving Car/Autonomous technologies like Deep Learning, Computer Vision, Sensor Fusion, Localization, Controllers & Path Planning. The goal of this project is to use 3 aspects(Perception, Path Planning and Controls) and make the a simulated car drive autonomously around a simulated track and then also on a real track on a real car obeying speed limits and also obeying traffic light rules. 
+During this Nanodegree we learned about different aspects of Self Driving Car/Autonomous technologies like Deep Learning, Computer Vision, Sensor Fusion, Localization, Controllers & Path Planning. The goal of this project is to use 3 aspects(Perception, Path Planning and Controls) and make the a simulated car drive autonomously around a simulated track. Then, also on a real track on a real car obeying speed limits and traffic light rules. 
 
 This is the project repo for the final project of the Udacity Self-Driving Car Nanodegree: Programming a Real Self-Driving Car by:
 
@@ -11,7 +11,7 @@ This is the project repo for the final project of the Udacity Self-Driving Car N
 * [Monish Sunku Prabhakar(sunku.monish@colorado.edu)](https://github.com/spgitmonish)
 
 ## Overview 
-For this project, we wrote ROS nodes to implement core functionality of the autonomous vehicle system, including traffic light detection, control, and waypoint following. The following is a system architecture diagram showing the ROS nodes and topics used in the project. 
+For this project, we wrote ROS nodes to implement core functionality of the autonomous vehicle system, including traffic light detection, waypoint following and control. The following is a system architecture diagram showing the ROS nodes and topics used in the project. 
 
 <p align="center">
    <img src="imgs/ROSGraph.png">
@@ -41,11 +41,9 @@ We used the Inception-V3 model for training on an images dataset and for inferen
 `Code: ../ros/src/tl_detector.py, ../ros/src/tl_detector/light_classifier/tl_classifier.py`
 
 ### Planning
-The purpose of this module is to publish a fixed number of waypoints ahead of the vehicle with the correct target velocities, depending on traffic lights and obstacles. This module subscribes to */current_pose* to get the current position of the car and */traffic_waypoints* topic to get the closest waypoint to the upcoming traffic light.
+This module subscribes to */current_pose* to get the current position of the car and */traffic_waypoints* topic to get the closest waypoint to the upcoming traffic light to stop at, if the light color is Red or Yellow. The messages from these two topics and the values in the messages determine the next state in the state machine within this module which in turn determines the target velocities for the upcoming waypoints. 
 
-This module publishes */base_waypoints* to the topic a list of all waypoints for the track, so this list includes waypoints both before and after the vehicle (Waypoint Loader, the publisher for */base_waypoints* publishes only once). 
-
-The second topic this module publishes to */final_waypoints* is the list of fixed number of waypoints currently ahead of the vehicle. The first waypoint in the list published to */final_waypoints* should be the first waypoint that is currently ahead of the car.
+The Waypoint Loader node of this module publishes to the */base_waypoints*  topic a list of all waypoints for the track, so this list includes waypoints both before and after the vehicle(published only once). The second topic this module publishes to, */final_waypoints*, is the list of fixed number of waypoints currently ahead of the vehicle. The first waypoint in the list published to */final_waypoints* should be the first waypoint that is currently ahead of the car.
 
 <p align="center">
    <img src="imgs/WaypointUpdater.png">
@@ -57,15 +55,13 @@ The second topic this module publishes to */final_waypoints* is the list of fixe
 `Code: ../ros/src/waypoint_updater/waypoint_updater.py`
 
 ### Control
-Once messages are being published to */final_waypoints*, the vehicle's waypoint follower will publish twist commands to the */twist_cmd* topic. the drive-by-wire node which subscribes to */twist_cmd* and uses various controllers to provide appropriate throttle, brake, and steering commands. These commands are then be published to the following topics:
+Once messages are published to */final_waypoints*, the vehicle's waypoint follower will publish twist commands to the */twist_cmd* topic. The drive-by-wire node, which subscribes to */twist_cmd*, uses various controllers to provide appropriate throttle, brake, and steering control commands. These commands are then be published to the following topics respectively:
 
 1. */vehicle/throttle_cmd*
 2. */vehicle/brake_cmd*
 3. */vehicle/steering_cmd*
 
-This module subscribes to the */vehicle/dbw_enabled* topic because a safety driver may take control of the car during testing, and it's not assumed that the car is always following the commands. If a safety driver does take over, the controller will mistakenly accumulate error.
-
-In the simulator, DBW is always enabled but not in the actual car.
+This module subscribes to the */vehicle/dbw_enabled* topic because a safety driver may take control of the car during testing, and it's not assumed that the car is always following the commands. If a safety driver does take over, the controller will mistakenly accumulate error. In the simulator, DBW is always enabled but not in the actual car.
 
 <p align="center">
    <img src="imgs/DBWNode.png">
@@ -136,4 +132,4 @@ roslaunch launch/site.launch
 ```
 
 ## Final Thoughts
-This project is the culmination of almost 12 months of learning. Our team included members from 3 different regions and time-zones of the country. It was really gratifying to make the design the different modules and ensure that the pieces work together to have a safe, compliant and working solution.
+This project is the culmination of almost 12 months of learning. Our team included members from 3 different regions and time-zones of the country. It was really gratifying to design and develop the modules and ensure that the different pieces work together to have a safe, compliant and working solution.
