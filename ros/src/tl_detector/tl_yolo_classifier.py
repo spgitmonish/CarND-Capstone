@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 import os
 
-from darkflow.net.build import TFNet
+from boxespredict.yolomodeltest import *
 from styx_msgs.msg import TrafficLight
 
 CONFIDENCE_THRESHOLD = 0.8
@@ -14,14 +14,11 @@ class TLClassifier(object):
 	# The protocol buffer file and the .meta file
 	# NOTE: The .met file is a JSON dump of everything necessary for post-processing such as anchors
 	#       and labels
-	# 30000 steps model
-	#options = {"pbLoad": os.getcwd() + "/yolo_saved_graph/30000-tiny-yolo-voc-3c.pb", "metaLoad": os.getcwd() + "/yolo_saved_graph/30000-tiny-yolo-voc-3c.meta", "threshold": 0.1, "gpu": 1.0}
+	# 30000 steps model trained with Udacity Simulator and Real Track images
+	options = {"pbLoad": os.getcwd() + "/yolo_saved_graph/30000-SimReal-tiny-yolo-voc-3c.pb", "metaLoad": os.getcwd() + "/yolo_saved_graph/30000-SimReal-tiny-yolo-voc-3c.meta", "threshold": 0.1, "gpu": 1.0}
 
-	# 40375 steps model
-	options = {"pbLoad": os.getcwd() + "/yolo_saved_graph/40375-tiny-yolo-voc-3c.pb", "metaLoad": os.getcwd() + "/yolo_saved_graph/40375-tiny-yolo-voc-3c.meta", "threshold": 0.1, "gpu": 1.0}
-
-	# Object of Darkflow
-	self.tfnet = TFNet(options)
+	# Object of for making predictions using trained YOLO model
+	self.yolo_test = YOLOTest(options)
 
     def get_classification(self, image):
         """ Determines the color of the traffic light in the image
@@ -35,10 +32,10 @@ class TLClassifier(object):
     	# Predict using the TFNet object
     	# NOTE: The results returned is in a format which has the following:
     	# 'result': [{'bottomright': { 'x': <value>, 'y': <value>},
-    	#	          'confidence': <score_value>,
-        # 	          'label': '<label_name>',
-        # 	          'topleft': { 'x': <value>, 'y': <value>}]
-        results = self.tfnet.return_predict(image)
+    	#	      'confidence': <score_value>,
+        # 	      'label': '<label_name>',
+        # 	      'topleft': { 'x': <value>, 'y': <value>}]
+        results = return_predict(image, yolo_test)
 
         # By default the label to return is UNKNOWN
         label_to_return = TrafficLight.UNKNOWN
